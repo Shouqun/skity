@@ -124,6 +124,8 @@ class VulkanContextState {
 
   void CollectPendingSubmissions(bool wait_all) const;
 
+  void CollectPendingSubmissionsThroughFence(VkFence completed_fence) const;
+
   VkRenderPass GetOrCreateLegacyRenderPass(
       const LegacyRenderPassKey& key) const;
 
@@ -140,6 +142,8 @@ class VulkanContextState {
   bool LoadAvailableInstanceLayers();
   bool LoadAvailableDeviceExtensions();
   bool LoadDeviceFns();
+  void ReleaseCompletedSubmissions(
+      std::vector<VulkanPendingSubmission> completed_submissions) const;
   void Reset();
 #if defined(SKITY_ANDROID)
   void LoadAndroidFns();

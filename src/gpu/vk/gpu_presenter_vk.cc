@@ -137,6 +137,14 @@ GPUPresenterVK::GPUPresenterVK(GPUContextImpl* context,
 
 GPUPresenterVK::~GPUPresenterVK() { Reset(); }
 
+void GPUPresenterVK::RetirePresenter(std::unique_ptr<GPUPresenterVK> presenter,
+                                     std::function<void()> completion) {
+  if (presenter != nullptr) {
+    retired_presenters_.emplace_back(std::move(presenter));
+    retirement_completions_.emplace_back(std::move(completion));
+  }
+}
+
 bool GPUPresenterVK::Init() {
   if (context_ == nullptr || state_ == nullptr ||
       desc_.surface == VK_NULL_HANDLE || desc_.width == 0 ||
@@ -199,6 +207,7 @@ GPUSurfaceAcquireResult GPUPresenterVK::AcquireNextSurface(
       state_->GetLogicalDevice(), 1, &frame_slot.in_flight, VK_TRUE, 0);
   if (frame_wait_result == VK_TIMEOUT) {
     result.status = GPUPresenterStatus::kRetryLater;
+    result.retry_reason = GPUSurfaceAcquireRetryReason::kFrameInFlight;
     return result;
   }
   if (frame_wait_result != VK_SUCCESS) {
@@ -206,13 +215,16 @@ GPUSurfaceAcquireResult GPUPresenterVK::AcquireNextSurface(
          static_cast<int32_t>(frame_wait_result));
     return result;
   }
+  state_->CollectPendingSubmissionsThroughFence(frame_slot.in_flight);
 
   uint32_t image_index = 0;
   const VkResult acquire_result = fns_.vkAcquireNextImageKHR(
-      state_->GetLogicalDevice(), swapchain_, 0,
-      frame_slot.acquire_semaphore, VK_NULL_HANDLE, &image_index);
+      state_->GetLogicalDevice(), swapchain_, 0, frame_slot.acquire_semaphore,
+      VK_NULL_HANDLE, &image_index);
   if (acquire_result == VK_TIMEOUT || acquire_result == VK_NOT_READY) {
     result.status = GPUPresenterStatus::kRetryLater;
+    result.retry_reason =
+        GPUSurfaceAcquireRetryReason::kSwapchainImageUnavailable;
     return result;
   }
   if (acquire_result == VK_ERROR_OUT_OF_DATE_KHR) {
@@ -222,8 +234,7 @@ GPUSurfaceAcquireResult GPUPresenterVK::AcquireNextSurface(
   // VK_SUBOPTIMAL_KHR still acquires a valid image. Recreating immediately can
   // livelock on Android surfaces that remain usable but report a persistent
   // transform or extent mismatch during rotation.
-  if (acquire_result != VK_SUCCESS &&
-      acquire_result != VK_SUBOPTIMAL_KHR) {
+  if (acquire_result != VK_SUCCESS && acquire_result != VK_SUBOPTIMAL_KHR) {
     LOGE("Failed to acquire swapchain image: {}",
          static_cast<int32_t>(acquire_result));
     return result;
@@ -236,16 +247,25 @@ GPUSurfaceAcquireResult GPUPresenterVK::AcquireNextSurface(
     return result;
   }
 
+  if (image_presentations_pending_[image_index]) {
+    // Reacquiring an image proves its previous presentation has completed.
+    // Since presentation operations are ordered, presenters retired before
+    // the first presentation on this swapchain can now be released safely.
+    image_presentations_pending_[image_index] = false;
+    ReleaseRetiredPresenters();
+  }
+
   VkFence& image_fence = image_in_flight_fences_[image_index];
   if (image_fence != VK_NULL_HANDLE && image_fence != frame_slot.in_flight) {
-    const VkResult image_wait_result = device_fns.vkWaitForFences(
-        state_->GetLogicalDevice(), 1, &image_fence, VK_TRUE,
-        kPresenterWaitTimeoutNanoseconds);
+    const VkResult image_wait_result =
+        device_fns.vkWaitForFences(state_->GetLogicalDevice(), 1, &image_fence,
+                                   VK_TRUE, kPresenterWaitTimeoutNanoseconds);
     if (image_wait_result != VK_SUCCESS) {
       LOGE("Failed to wait for Vulkan image fence: {}",
            static_cast<int32_t>(image_wait_result));
       return result;
     }
+    state_->CollectPendingSubmissionsThroughFence(image_fence);
   }
   image_fence = frame_slot.in_flight;
 
@@ -363,6 +383,7 @@ GPUPresenterStatus GPUPresenterVK::Present(
   // A suboptimal presentation completed successfully. The owner can resize
   // when its platform metrics settle without dropping this frame.
   if (result == VK_SUCCESS || result == VK_SUBOPTIMAL_KHR) {
+    image_presentations_pending_[present_info->image_index] = true;
     return GPUPresenterStatus::kSuccess;
   }
   if (result == VK_ERROR_OUT_OF_DATE_KHR) {
@@ -595,6 +616,7 @@ bool GPUPresenterVK::CreateSwapchain() {
   }
   swapchain_images_.resize(swapchain_image_count);
   image_in_flight_fences_.assign(swapchain_image_count, VK_NULL_HANDLE);
+  image_presentations_pending_.assign(swapchain_image_count, false);
   return true;
 }
 
@@ -704,6 +726,33 @@ void GPUPresenterVK::DestroySwapchain() {
   swapchain_ = VK_NULL_HANDLE;
   swapchain_images_.clear();
   image_in_flight_fences_.clear();
+  image_presentations_pending_.clear();
+}
+
+void GPUPresenterVK::ReleaseRetiredPresenters() {
+  for (auto& presenter : retired_presenters_) {
+    presenter->ResetAfterPresentationRetirement();
+  }
+  retired_presenters_.clear();
+
+  auto completions = std::move(retirement_completions_);
+  retirement_completions_.clear();
+  for (auto& completion : completions) {
+    if (completion) {
+      completion();
+    }
+  }
+}
+
+void GPUPresenterVK::ResetAfterPresentationRetirement() {
+  ReleaseRetiredPresenters();
+  DestroyFrameSlots();
+  DestroySwapchainImageViews();
+  DestroySwapchain();
+  current_frame_ = 0;
+  has_outstanding_surface_ = false;
+  context_ = nullptr;
+  state_.reset();
 }
 
 void GPUPresenterVK::Reset() {
@@ -714,6 +763,7 @@ void GPUPresenterVK::Reset() {
   if (state_ != nullptr) {
     state_->CollectPendingSubmissions(true);
   }
+  ReleaseRetiredPresenters();
   DestroyFrameSlots();
   DestroySwapchainImageViews();
   DestroySwapchain();

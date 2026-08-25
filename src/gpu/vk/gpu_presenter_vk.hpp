@@ -7,6 +7,7 @@
 
 #include <vulkan/vulkan.h>
 
+#include <functional>
 #include <memory>
 #include <skity/gpu/gpu_context_vk.hpp>
 #include <skity/gpu/gpu_presenter.hpp>
@@ -37,6 +38,12 @@ class GPUPresenterVK : public GPUPresenter {
       const GPUSurfaceAcquireDescriptor& desc) override;
 
   GPUPresenterStatus Present(std::unique_ptr<GPUSurface> surface) override;
+
+  // A replacement swapchain must keep the previous presenter alive until a
+  // presentation from the replacement has completed. This avoids blocking a
+  // resize on vkDeviceWaitIdle while preserving Vulkan object lifetimes.
+  void RetirePresenter(std::unique_ptr<GPUPresenterVK> presenter,
+                       std::function<void()> completion = {});
 
  private:
   struct FrameSlot {
@@ -75,6 +82,8 @@ class GPUPresenterVK : public GPUPresenter {
   void DestroyFrameSlots();
   void DestroySwapchainImageViews();
   void DestroySwapchain();
+  void ReleaseRetiredPresenters();
+  void ResetAfterPresentationRetirement();
   void Reset();
 
   GPUContextImpl* context_ = nullptr;
@@ -96,6 +105,9 @@ class GPUPresenterVK : public GPUPresenter {
   std::vector<FrameSlot> frame_slots_ = {};
   std::vector<VkSemaphore> image_present_semaphores_ = {};
   std::vector<VkFence> image_in_flight_fences_ = {};
+  std::vector<bool> image_presentations_pending_ = {};
+  std::vector<std::unique_ptr<GPUPresenterVK>> retired_presenters_ = {};
+  std::vector<std::function<void()>> retirement_completions_ = {};
   uint32_t current_frame_ = 0;
   bool has_outstanding_surface_ = false;
 };

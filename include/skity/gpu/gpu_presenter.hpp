@@ -81,6 +81,15 @@ enum class GPUPresenterStatus {
 };
 
 /**
+ * @brief Reason an acquire operation returned `kRetryLater`.
+ */
+enum class GPUSurfaceAcquireRetryReason {
+  kNone,
+  kFrameInFlight,
+  kSwapchainImageUnavailable,
+};
+
+/**
  * @brief Result returned by `AcquireNextSurface()`.
  */
 struct GPUSurfaceAcquireResult {
@@ -88,6 +97,12 @@ struct GPUSurfaceAcquireResult {
    * Outcome of the acquire operation.
    */
   GPUPresenterStatus status = GPUPresenterStatus::kError;
+
+  /**
+   * Cause of `kRetryLater`, or `kNone` for every other status.
+   */
+  GPUSurfaceAcquireRetryReason retry_reason =
+      GPUSurfaceAcquireRetryReason::kNone;
 
   /**
    * One-shot surface returned on successful acquire.
