@@ -6,6 +6,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdint>
 
 #include "src/gpu/gpu_context_impl.hpp"
 #include "src/gpu/vk/gpu_command_buffer_vk.hpp"
@@ -16,6 +17,8 @@
 namespace skity {
 
 namespace {
+
+constexpr std::uint64_t kPresenterWaitTimeoutNanoseconds = 100'000'000;
 
 VkCompositeAlphaFlagBitsKHR ResolveCompositeAlpha(
     VkCompositeAlphaFlagBitsKHR preferred,
@@ -192,10 +195,12 @@ GPUSurfaceAcquireResult GPUPresenterVK::AcquireNextSurface(
   const auto& device_fns = state_->DeviceFns();
   FrameSlot& frame_slot = frame_slots_[current_frame_];
 
-  if (device_fns.vkWaitForFences(state_->GetLogicalDevice(), 1,
-                                 &frame_slot.in_flight, VK_TRUE,
-                                 UINT64_MAX) != VK_SUCCESS) {
-    LOGE("Failed to wait for Vulkan presenter fence");
+  const VkResult frame_wait_result = device_fns.vkWaitForFences(
+      state_->GetLogicalDevice(), 1, &frame_slot.in_flight, VK_TRUE,
+      kPresenterWaitTimeoutNanoseconds);
+  if (frame_wait_result != VK_SUCCESS) {
+    LOGE("Failed to wait for Vulkan presenter fence: {}",
+         static_cast<int32_t>(frame_wait_result));
     return result;
   }
 
@@ -207,7 +212,7 @@ GPUSurfaceAcquireResult GPUPresenterVK::AcquireNextSurface(
 
   uint32_t image_index = 0;
   const VkResult acquire_result = fns_.vkAcquireNextImageKHR(
-      state_->GetLogicalDevice(), swapchain_, UINT64_MAX,
+      state_->GetLogicalDevice(), swapchain_, kPresenterWaitTimeoutNanoseconds,
       frame_slot.acquire_semaphore, VK_NULL_HANDLE, &image_index);
   if (acquire_result == VK_ERROR_OUT_OF_DATE_KHR ||
       acquire_result == VK_SUBOPTIMAL_KHR) {
@@ -224,18 +229,17 @@ GPUSurfaceAcquireResult GPUPresenterVK::AcquireNextSurface(
       image_index >= swapchain_image_views_.size()) {
     LOGE("Failed to acquire swapchain image: invalid image index {}",
          image_index);
-    state_->DeviceFns().vkWaitForFences(state_->GetLogicalDevice(), 1,
-                                        &frame_slot.in_flight, VK_TRUE,
-                                        UINT64_MAX);
-    fns_.vkResetFences(state_->GetLogicalDevice(), 1, &frame_slot.in_flight);
     return result;
   }
 
   VkFence& image_fence = image_in_flight_fences_[image_index];
   if (image_fence != VK_NULL_HANDLE && image_fence != frame_slot.in_flight) {
-    if (device_fns.vkWaitForFences(state_->GetLogicalDevice(), 1, &image_fence,
-                                   VK_TRUE, UINT64_MAX) != VK_SUCCESS) {
-      LOGE("Failed to wait for Vulkan image fence");
+    const VkResult image_wait_result = device_fns.vkWaitForFences(
+        state_->GetLogicalDevice(), 1, &image_fence, VK_TRUE,
+        kPresenterWaitTimeoutNanoseconds);
+    if (image_wait_result != VK_SUCCESS) {
+      LOGE("Failed to wait for Vulkan image fence: {}",
+           static_cast<int32_t>(image_wait_result));
       return result;
     }
   }
