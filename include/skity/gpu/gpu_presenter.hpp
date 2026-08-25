@@ -69,6 +69,12 @@ enum class GPUPresenterStatus {
   kNeedRecreate,
 
   /**
+   * No presentation image is currently available. The caller may retry after
+   * yielding without recreating the swapchain.
+   */
+  kRetryLater,
+
+  /**
    * Operation failed for a reason other than swapchain recreation.
    */
   kError,
@@ -123,9 +129,10 @@ class SKITY_API GPUPresenter {
    *             derived from the presenter physical size and `content_scale`.
    *
    * @return A structured acquire result. On success, `surface` contains a
-   *         one-shot GPUSurface instance. The returned surface should be
-   *         presented or discarded before acquiring the next one from the same
-   *         presenter.
+   *         one-shot GPUSurface instance. `kRetryLater` means no image is
+   *         currently available and no surface was acquired. The returned
+   *         surface should be presented or discarded before acquiring the next
+   *         one from the same presenter.
    */
   virtual GPUSurfaceAcquireResult AcquireNextSurface(
       const GPUSurfaceAcquireDescriptor& desc) = 0;

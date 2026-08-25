@@ -196,30 +196,34 @@ GPUSurfaceAcquireResult GPUPresenterVK::AcquireNextSurface(
   FrameSlot& frame_slot = frame_slots_[current_frame_];
 
   const VkResult frame_wait_result = device_fns.vkWaitForFences(
-      state_->GetLogicalDevice(), 1, &frame_slot.in_flight, VK_TRUE,
-      kPresenterWaitTimeoutNanoseconds);
+      state_->GetLogicalDevice(), 1, &frame_slot.in_flight, VK_TRUE, 0);
+  if (frame_wait_result == VK_TIMEOUT) {
+    result.status = GPUPresenterStatus::kRetryLater;
+    return result;
+  }
   if (frame_wait_result != VK_SUCCESS) {
     LOGE("Failed to wait for Vulkan presenter fence: {}",
          static_cast<int32_t>(frame_wait_result));
     return result;
   }
 
-  if (fns_.vkResetFences(state_->GetLogicalDevice(), 1,
-                         &frame_slot.in_flight) != VK_SUCCESS) {
-    LOGE("Failed to reset Vulkan presenter fence");
-    return result;
-  }
-
   uint32_t image_index = 0;
   const VkResult acquire_result = fns_.vkAcquireNextImageKHR(
-      state_->GetLogicalDevice(), swapchain_, kPresenterWaitTimeoutNanoseconds,
+      state_->GetLogicalDevice(), swapchain_, 0,
       frame_slot.acquire_semaphore, VK_NULL_HANDLE, &image_index);
-  if (acquire_result == VK_ERROR_OUT_OF_DATE_KHR ||
-      acquire_result == VK_SUBOPTIMAL_KHR) {
+  if (acquire_result == VK_TIMEOUT || acquire_result == VK_NOT_READY) {
+    result.status = GPUPresenterStatus::kRetryLater;
+    return result;
+  }
+  if (acquire_result == VK_ERROR_OUT_OF_DATE_KHR) {
     result.status = GPUPresenterStatus::kNeedRecreate;
     return result;
   }
-  if (acquire_result != VK_SUCCESS) {
+  // VK_SUBOPTIMAL_KHR still acquires a valid image. Recreating immediately can
+  // livelock on Android surfaces that remain usable but report a persistent
+  // transform or extent mismatch during rotation.
+  if (acquire_result != VK_SUCCESS &&
+      acquire_result != VK_SUBOPTIMAL_KHR) {
     LOGE("Failed to acquire swapchain image: {}",
          static_cast<int32_t>(acquire_result));
     return result;
@@ -244,6 +248,12 @@ GPUSurfaceAcquireResult GPUPresenterVK::AcquireNextSurface(
     }
   }
   image_fence = frame_slot.in_flight;
+
+  if (fns_.vkResetFences(state_->GetLogicalDevice(), 1,
+                         &frame_slot.in_flight) != VK_SUCCESS) {
+    LOGE("Failed to reset Vulkan presenter fence");
+    return result;
+  }
 
   GPUSurfaceSyncInfoVK sync_info = {};
   sync_info.wait_semaphore = frame_slot.acquire_semaphore;
@@ -350,10 +360,12 @@ GPUPresenterStatus GPUPresenterVK::Present(
       fns_.vkQueuePresentKHR(present_queue_, &present_info_vk);
   has_outstanding_surface_ = false;
   current_frame_ = (current_frame_ + 1) % frame_slots_.size();
-  if (result == VK_SUCCESS) {
+  // A suboptimal presentation completed successfully. The owner can resize
+  // when its platform metrics settle without dropping this frame.
+  if (result == VK_SUCCESS || result == VK_SUBOPTIMAL_KHR) {
     return GPUPresenterStatus::kSuccess;
   }
-  if (result == VK_ERROR_OUT_OF_DATE_KHR || result == VK_SUBOPTIMAL_KHR) {
+  if (result == VK_ERROR_OUT_OF_DATE_KHR) {
     return GPUPresenterStatus::kNeedRecreate;
   }
   return GPUPresenterStatus::kError;
