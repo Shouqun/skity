@@ -776,8 +776,8 @@ void SWRaster::RastePath(Path const& path, Matrix const& transform,
   // also needs to be modified.
   start_y = bounds_.Top();
   stop_y = scan_bounds.Bottom();
-  left_bound = static_cast<uint32_t>(scan_bounds.Left()) << 16;
-  right_bound = static_cast<uint32_t>(scan_bounds.Right()) << 16;
+  left_bound = SWIntToFixed(static_cast<int32_t>(scan_bounds.Left()));
+  right_bound = SWIntToFixed(static_cast<int32_t>(scan_bounds.Right()));
 
   WalkEdges(&head, &tail, path.GetFillType(), &span_builder, start_y, stop_y,
             left_bound, right_bound);
