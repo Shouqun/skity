@@ -549,21 +549,43 @@ void ScalerContextDarwin::GenerateImage(PackedGlyphID id, GlyphData *glyph,
   const uint32_t height = static_cast<uint32_t>(glyph->image_.height);
 
   const bool is_color = glyph->image_.format == BitmapFormat::kBGRA8;
+  // Alpha-only contexts lose CoreText's color-sensitive font smoothing. For
+  // native phases, use a bounded opaque RGB scratch surface and recover scalar
+  // coverage against the opposite black/white background.
+  const bool native_gray =
+      !is_color && desc_.native_raster_phase != 0 &&
+      static_cast<uint64_t>(width) * height <= 4U * 1024U * 1024U;
+  const float luminance = ColorGetR(desc_.foreground_color) / 255.0f;
+  const float background = luminance > 0.5f ? 0.0f : 1.0f;
 
   OffScreenContext::Target target =
-      os_context_.PrepareContext(width, height, is_color);
+      os_context_.PrepareContext(width, height, is_color || native_gray);
   if (!target) {
     return;
   }
 
   CGContextRef cg_context = target.context;
   if (target.context_was_created) {
-    InitializeCGContext(cg_context, is_color);
+    InitializeCGContext(cg_context, is_color || native_gray);
+  }
+
+  if (native_gray) {
+    const uint8_t background_byte =
+        static_cast<uint8_t>(std::round(background * 255.0f));
+    for (uint32_t y = 0; y < height; ++y) {
+      std::memset(target.pixels + static_cast<size_t>(y) * target.row_bytes,
+                  background_byte, static_cast<size_t>(width) * 4);
+    }
+    CGContextSetGrayFillColor(cg_context, luminance, 1.0f);
+    CGContextSetAllowsFontSmoothing(cg_context, true);
+    CGContextSetShouldSmoothFonts(cg_context, true);
+  } else if (is_color) {
+    CGContextSetFillColorWithColor(cg_context, os_context_.GetCGColor());
   }
 
   // Skia chooses Core Graphics antialiasing from the glyph mask format:
   // BW (Font::Edging::kAlias) disables it, while A8/LCD/color masks enable it.
-  os_context_.SetShouldAntialias(is_color ||
+  os_context_.SetShouldAntialias(is_color || native_gray ||
                                  desc_.GetEdging() != Font::Edging::kAlias);
 
   CGPoint point = CGPointMake(glyph->image_.origin_x_for_raster,
@@ -579,8 +601,27 @@ void ScalerContextDarwin::GenerateImage(PackedGlyphID id, GlyphData *glyph,
                        stroke_desc.is_stroke ? &stroke_desc : nullptr);
   }
 
+  if (native_gray) {
+    CGContextFlush(cg_context);
+    // Pack A8 in place. Each destination row precedes its unread RGB source
+    // row, including when the reusable context has a larger row stride.
+    for (uint32_t y = 0; y < height; ++y) {
+      const uint8_t* source =
+          target.pixels + static_cast<size_t>(y) * target.row_bytes;
+      uint8_t* destination = target.pixels + static_cast<size_t>(y) * width;
+      for (uint32_t x = 0; x < width; ++x) {
+        const float value = source[static_cast<size_t>(x) * 4 + 1] / 255.0f;
+        const float coverage =
+            (value - background) / (luminance - background);
+        destination[x] = static_cast<uint8_t>(std::round(
+            std::clamp(coverage, 0.0f, 1.0f) * 255.0f));
+      }
+    }
+    glyph->image_.row_bytes = width;
+  } else {
+    glyph->image_.row_bytes = target.row_bytes;
+  }
   glyph->image_.buffer = target.pixels;
-  glyph->image_.row_bytes = target.row_bytes;
 }
 
 void ScalerContextDarwin::GenerateImageInfo(PackedGlyphID id, GlyphData *glyph,
