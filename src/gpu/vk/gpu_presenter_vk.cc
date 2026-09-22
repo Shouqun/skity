@@ -314,7 +314,9 @@ GPUSurfaceAcquireResult GPUPresenterVK::AcquireNextSurface(
 
   GPUSurfaceSyncInfoVK sync_info = {};
   sync_info.wait_semaphore = frame_slot.acquire_semaphore;
-  sync_info.wait_dst_stage_mask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+  // The first use includes an UNDEFINED-to-attachment layout transition.
+  // Wait before every command, including that transition, not only color writes.
+  sync_info.wait_dst_stage_mask = VK_PIPELINE_STAGE_ALL_COMMANDS_BIT;
   sync_info.signal_semaphore = image_present_semaphores_[image_index];
   sync_info.signal_fence = frame_slot.in_flight;
 
@@ -338,8 +340,8 @@ GPUSurfaceAcquireResult GPUPresenterVK::AcquireNextSurface(
   surface_desc.sync_info = &sync_info;
 
   GPUTextureDescriptor texture_desc = {};
-  texture_desc.width = desc_.width;
-  texture_desc.height = desc_.height;
+  texture_desc.width = swapchain_extent_.width;
+  texture_desc.height = swapchain_extent_.height;
   texture_desc.mip_level_count = 1;
   texture_desc.sample_count = 1;
   texture_desc.format = surface_format;
