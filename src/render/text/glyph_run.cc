@@ -271,8 +271,13 @@ GlyphRunList DirectGlyphRun::SubRunListByTexture(
       max_index = glyph_region.index_in_group;
     }
 
-    glyph_regions.push_back(
-        {k, glyph_region, glyph_position.position - origin_offset});
+    Vec2 draw_position = glyph_position.position;
+#if defined(__APPLE__)
+    if (native_phases) {
+      draw_position.x = std::floor(draw_position.x);
+    }
+#endif
+    glyph_regions.push_back({k, glyph_region, draw_position - origin_offset});
     k++;
   }
 
