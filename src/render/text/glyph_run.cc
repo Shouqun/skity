@@ -81,6 +81,34 @@ class DirectGlyphRun : public GlyphRun {
   Rect bounds_;
 };
 
+namespace {
+bool UsesNativeGlyphPhases(const Font& font, const Paint& paint,
+                           AtlasFormat format, bool is_stroke,
+                           float context_scale,
+                           const Matrix& transform) {
+#if defined(__APPLE__)
+  return !is_stroke && !paint.GetShader() && !paint.GetColorFilter() &&
+         !paint.GetImageFilter() && !paint.GetMaskFilter() &&
+         !paint.GetPathEffect() &&
+         format == AtlasFormat::A8 && context_scale == 1.0f &&
+         transform.GetScaleX() == 1.0f && transform.GetScaleY() == 1.0f &&
+         transform.GetSkewX() == 0.0f && transform.GetSkewY() == 0.0f &&
+         font.GetScaleX() == 1.0f && font.GetSkewX() == 0.0f &&
+         !font.IsEmbolden() && font.GetTypeface() &&
+         !font.GetTypeface()->ContainsColorTable();
+#else
+  (void)font;
+  (void)paint;
+  (void)format;
+  (void)is_stroke;
+  (void)context_scale;
+  (void)transform;
+  return false;
+#endif
+}
+
+}  // namespace
+
 ArrayList<GlyphRect, 16> DirectGlyphRun::Raster(
     float canvas_scale, ArenaAllocator* arena_allocator) {
   ArrayList<GlyphRect, 16> glyph_rects;
@@ -137,6 +165,11 @@ HWDraw* DirectGlyphRun::Draw(Matrix transform, const Matrix& glyph_to_layer,
       HWDynamicTextDraw::CalcTransform(transform, text_transform);
   const Matrix glyph_rect_to_layer = glyph_to_layer * final_transform;
   bounds_ = paint_.ComputeFastBounds(glyph_rect_to_layer.MapRect(bounds_));
+#if defined(__APPLE__)
+  if (!is_stroke_ && atlas_->GetFormat() == AtlasFormat::A8) {
+    use_linear_text_filter = true;
+  }
+#endif
   auto gpu_sampler = atlas_->GetGPUSampler(
       group_index_, use_linear_text_filter ? GPUFilterMode::kLinear
                                            : GPUFilterMode::kNearest);
@@ -201,6 +234,8 @@ GlyphRunList DirectGlyphRun::SubRunListByTexture(
       ComputeAxisAlignmentForHorizontalText(font.IsBaselineSnap(), transform);
 
   Atlas* atlas = atlas_manager->GetAtlas(format);
+  const bool native_phases = UsesNativeGlyphPhases(
+      font, paint, format, is_stroke, context_scale, transform);
   uint32_t k = 0;
   while (k < count) {
     auto info = *(glyph_info[k]);
@@ -210,12 +245,14 @@ GlyphRunList DirectGlyphRun::SubRunListByTexture(
     transform.MapPoints(&device_run_pos, &run_pos, 1);
     const QuantizedGlyphPosition glyph_position =
         QuantizeGlyphPosition(device_run_pos, context_scale, rounding_spec);
+    const uint32_t native_raster_phase =
+        native_phases ? static_cast<uint32_t>(glyph_position.x_phase) + 1u : 0u;
 
-    GlyphRegion glyph_region =
-        atlas->GetGlyphRegion(font,
-                              PackedGlyphID(info.Id(), glyph_position.x_phase,
-                                            glyph_position.y_phase),
-                              paint, false, context_scale, transform);
+    GlyphRegion glyph_region = atlas->GetGlyphRegion(
+        font,
+        PackedGlyphID(info.Id(), glyph_position.x_phase,
+                      glyph_position.y_phase),
+        paint, false, context_scale, transform, native_raster_phase);
     if (glyph_region.loc.z == 0 || glyph_region.loc.w == 0) {
       k++;
       continue;
@@ -225,8 +262,13 @@ GlyphRunList DirectGlyphRun::SubRunListByTexture(
       max_index = glyph_region.index_in_group;
     }
 
-    glyph_regions.push_back(
-        {k, glyph_region, glyph_position.position - origin_offset});
+    Vec2 draw_position = glyph_position.position;
+#if defined(__APPLE__)
+    if (native_phases) {
+      draw_position.x = std::floor(draw_position.x);
+    }
+#endif
+    glyph_regions.push_back({k, glyph_region, draw_position - origin_offset});
     k++;
   }
 
