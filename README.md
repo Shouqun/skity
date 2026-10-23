@@ -60,6 +60,9 @@ Pass `SKITY_EXAMPLE=ON` to cmake to enable build example code. More options can 
 
 More details can visit [BUILD_AND_RUN.md](./docs/BUILD_AND_RUN.md).
 
+See [blur conventions](docs/BLUR_FILTERS.md) for legacy radius filters and
+the explicit Gaussian-sigma mask filter.
+
 ### Development
 
 The code below shows how to create a `skity::GPUSurface` instance using [GLFW](https://www.glfw.org/) with OpenGL backend. The full code can look at [window_gl.cc](./example/common/gl/window_gl.cc)

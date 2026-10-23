@@ -920,6 +920,15 @@ HWLayer* HWCanvas::GenLayer(const Paint& paint, Rect layer_bounds,
     }
   }
 
+  const auto mask_filter = paint.GetMaskFilter();
+  if (mask_filter &&
+      mask_filter->GetBlurType() == BlurType::kGaussianSigma &&
+      !HWFilters::GaussianBlurIsRepresentable(
+          mask_filter->GetBlurSigma(), layer_bounds, scale,
+          surface_->GetGPUContext()->GetGPUDevice()->GetMaxTextureSize())) {
+    return nullptr;
+  }
+
   // check if size is inf or nan
   if (std::isinf(width_f) || std::isnan(width_f) || std::isinf(height_f) ||
       std::isnan(height_f)) {

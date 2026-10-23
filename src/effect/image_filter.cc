@@ -1,3 +1,8 @@
+#include <algorithm>
+#include <cmath>
+#include <cstdint>
+#include <limits>
+#include <vector>
 /*
  * Copyright 2012 The Android Open Source Project
  *
@@ -194,6 +199,129 @@ void ImageFilterBase::BlurBitmapToCanvas(Canvas* canvas, Bitmap& bitmap,
       .Blur();
   canvas->DrawImage(Image::MakeImage(filtered_bitmap.GetPixmap()),
                     filter_bounds, &paint);
+}
+
+// static
+void ImageFilterBase::GaussianBlurBitmapToCanvas(
+    Canvas* canvas, Bitmap& bitmap, const Rect& filter_bounds,
+    const Paint& paint, float sigma_x, float sigma_y) {
+  auto kernel_radius = [](float sigma) {
+    if (!std::isfinite(sigma) || sigma < 0.0f) {
+      return -1;
+    }
+    const float support_radius = sigma * 3.0f;
+    const double rounded_support =
+        std::ceil(static_cast<double>(support_radius));
+    // Keep both the signed offset loop and 2 * radius + 1 representable before
+    // converting. Sampling below uses wider coordinates independently.
+    if (!std::isfinite(support_radius) ||
+        rounded_support > std::numeric_limits<int>::max() / 2) {
+      return -1;
+    }
+    return static_cast<int>(rounded_support);
+  };
+
+  const int horizontal_radius = kernel_radius(sigma_x);
+  const int vertical_radius = kernel_radius(sigma_y);
+  if (horizontal_radius < 0 || vertical_radius < 0) {
+    return;
+  }
+  std::vector<float> horizontal_kernel;
+  std::vector<float> vertical_kernel;
+  const size_t horizontal_count =
+      static_cast<size_t>(horizontal_radius) * 2u + 1u;
+  const size_t vertical_count =
+      static_cast<size_t>(vertical_radius) * 2u + 1u;
+  if (horizontal_count > horizontal_kernel.max_size() ||
+      vertical_count > vertical_kernel.max_size()) {
+    return;
+  }
+
+  auto make_kernel = [](float sigma, int radius, std::vector<float>* weights) {
+    const size_t count = static_cast<size_t>(radius) * 2u + 1u;
+    weights->assign(count, 0.0f);
+    if (radius == 0 || sigma == 0.0f) {
+      (*weights)[0] = 1.0f;
+      return;
+    }
+
+    const float denominator = 2.0f * sigma * sigma;
+    float total = 0.0f;
+    for (int offset = -radius; offset <= radius; ++offset) {
+      const float distance = static_cast<float>(offset);
+      // A positive subnormal sigma can underflow its square. Its discrete
+      // kernel has only the center weight, avoiding a zero-over-zero NaN.
+      float weight = offset == 0 ? 1.0f : 0.0f;
+      if (offset != 0 && denominator > 0.0f) {
+        weight = std::exp(-(distance * distance) / denominator);
+      }
+      (*weights)[static_cast<size_t>(offset + radius)] = weight;
+      total += weight;
+    }
+    for (float& weight : *weights) {
+      weight /= total;
+    }
+  };
+
+  auto convolve = [](Bitmap& source, Bitmap* destination,
+                     const std::vector<float>& weights, bool horizontal) {
+    const int radius = static_cast<int>((weights.size() - 1) / 2);
+    for (uint32_t y = 0; y < source.Height(); ++y) {
+      for (uint32_t x = 0; x < source.Width(); ++x) {
+        float alpha = 0.0f;
+        float red = 0.0f;
+        float green = 0.0f;
+        float blue = 0.0f;
+        for (int offset = -radius; offset <= radius; ++offset) {
+          const int64_t sample_x = static_cast<int64_t>(x) +
+                                   (horizontal ? offset : 0);
+          const int64_t sample_y = static_cast<int64_t>(y) +
+                                   (horizontal ? 0 : offset);
+          if (sample_x < 0 || sample_y < 0 ||
+              sample_x >= static_cast<int64_t>(source.Width()) ||
+              sample_y >= static_cast<int64_t>(source.Height())) {
+            continue;
+          }
+          const Color color = source.GetPixel(
+              static_cast<uint32_t>(sample_x),
+              static_cast<uint32_t>(sample_y));
+          const float weight =
+              weights[static_cast<size_t>(offset + radius)];
+          alpha += ColorGetA(color) * weight;
+          red += ColorGetR(color) * weight;
+          green += ColorGetG(color) * weight;
+          blue += ColorGetB(color) * weight;
+        }
+        const uint32_t output_alpha = static_cast<uint32_t>(
+            std::clamp(std::lround(alpha), 0l, 255l));
+        const auto premultiplied_channel = [output_alpha](float channel) {
+          return std::min(
+              output_alpha,
+              static_cast<uint32_t>(
+                  std::clamp(std::lround(channel), 0l, 255l)));
+        };
+        destination->SetPixel(
+            x, y,
+            ColorSetARGB(output_alpha, premultiplied_channel(red),
+                         premultiplied_channel(green),
+                         premultiplied_channel(blue)));
+      }
+    }
+  };
+
+  make_kernel(sigma_x, horizontal_radius, &horizontal_kernel);
+  make_kernel(sigma_y, vertical_radius, &vertical_kernel);
+  Bitmap horizontal_bitmap(bitmap.Width(), bitmap.Height(),
+                           kPremul_AlphaType);
+  Bitmap filtered_bitmap(bitmap.Width(), bitmap.Height(), kPremul_AlphaType);
+  convolve(bitmap, &horizontal_bitmap, horizontal_kernel, true);
+  convolve(horizontal_bitmap, &filtered_bitmap, vertical_kernel, false);
+  Paint composite_paint = paint;
+  // The offscreen bitmap already contains the source alpha and color filter.
+  composite_paint.SetAlphaF(1.0f);
+  composite_paint.SetColorFilter(nullptr);
+  canvas->DrawImage(Image::MakeImage(filtered_bitmap.GetPixmap()),
+                    filter_bounds, &composite_paint);
 }
 
 void ImageFilterBase::FlattenToBuffer(WriteBuffer& buffer) const {

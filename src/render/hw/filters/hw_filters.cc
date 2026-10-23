@@ -5,6 +5,8 @@
 #include "src/render/hw/filters/hw_filters.hpp"
 
 #include <algorithm>
+#include <cmath>
+#include <limits>
 #include <memory>
 #include <skity/effect/color_filter.hpp>
 #include <skity/effect/image_filter.hpp>
@@ -41,7 +43,8 @@ int scale_blur_radius(float radius, float scalar) {
  * 2. We use this value to calculate the downsampler scale.
  *
  */
-float calculate_blur_scale(float sigma) {
+float calculate_blur_scale(float sigma, BlurType blur_type,
+                           float support_radius) {
   static constexpr float kMaxBlurSigma = 16.f;
   if (sigma <= kMaxBlurSigma) {
     return 1.0;
@@ -57,25 +60,107 @@ float calculate_blur_scale(float sigma) {
   // for the blur.
   if (rounded < 0.125f) {
     float rounded_plus = powf(2.0f, exponent + 1);
-    float blur_radius = sigma_to_radius(sigma);
-    int kernel_size_plus =
-        (scale_blur_radius(blur_radius, rounded_plus) * 2) + 1;
     // This constant was picked by looking at the results to make sure no
     // shimmering was introduced at the highest sigma values that downscale to
     // 1/16th.
     static constexpr int32_t kEighthDownsampleKernalWidthMax = 41;
-    result = kernel_size_plus <= kEighthDownsampleKernalWidthMax ? rounded_plus
-                                                                 : rounded;
+    bool use_rounded_plus;
+    if (blur_type == BlurType::kGaussianSigma) {
+      // Compare support without narrowing a potentially large finite radius.
+      float kernel_radius_plus = std::ceil(support_radius * rounded_plus);
+      use_rounded_plus =
+          kernel_radius_plus <= (kEighthDownsampleKernalWidthMax - 1) / 2;
+    } else {
+      float blur_radius = sigma_to_radius(sigma);
+      int kernel_size_plus =
+          (scale_blur_radius(blur_radius, rounded_plus) * 2) + 1;
+      use_rounded_plus =
+          kernel_size_plus <= kEighthDownsampleKernalWidthMax;
+    }
+    result = use_rounded_plus ? rounded_plus : rounded;
   }
   return result;
 }
 
 }  // namespace
 
+bool HWFilters::GaussianBlurIsRepresentable(float sigma,
+                                            const Rect& layer_bounds,
+                                            Vec2 scale,
+                                            uint32_t max_texture_size) {
+  const float radius = 3.f * sigma;
+  if (!(sigma > 0.f) || !std::isfinite(sigma) || !std::isfinite(radius) ||
+      !layer_bounds.IsFinite() || layer_bounds.IsEmpty() ||
+      !layer_bounds.MakeOutset(radius, radius).IsFinite() ||
+      !(scale.x > 0.f) || !(scale.y > 0.f) || !std::isfinite(scale.x) ||
+      !std::isfinite(scale.y) || max_texture_size == 0) {
+    return false;
+  }
+
+  const double max_dimension =
+      std::min(static_cast<double>(max_texture_size),
+               static_cast<double>(std::numeric_limits<uint32_t>::max()));
+  const auto valid_dimension = [max_dimension](double value) {
+    return std::isfinite(value) && value > 0.0 &&
+           std::ceil(value) <= max_dimension;
+  };
+
+  // GenLayer rounds the source size; downsampling and filter outputs round
+  // outward. Keep the floating operations in the same order as those owners.
+  float width = std::round(layer_bounds.Width() * scale.x);
+  float height = std::round(layer_bounds.Height() * scale.y);
+  if (!valid_dimension(width) || !valid_dimension(height)) {
+    return false;
+  }
+
+  const float scaled_radius_x = radius * scale.x;
+  const float scaled_radius_y = radius * scale.y;
+  const float scaled_sigma_x = sigma * scale.x;
+  const float scaled_sigma_y = sigma * scale.y;
+  if (!std::isfinite(scaled_radius_x) || !std::isfinite(scaled_radius_y) ||
+      !std::isfinite(scaled_sigma_x) || !std::isfinite(scaled_sigma_y)) {
+    return false;
+  }
+  const float downsample_scale = calculate_blur_scale(
+      std::max(scaled_sigma_x, scaled_sigma_y), BlurType::kGaussianSigma,
+      std::max(scaled_radius_x, scaled_radius_y));
+  if (downsample_scale != 1.f) {
+    width = std::ceil(width * downsample_scale);
+    height = std::ceil(height * downsample_scale);
+    if (!valid_dimension(width) || !valid_dimension(height)) {
+      return false;
+    }
+  }
+
+  const float horizontal_radius =
+      std::ceil(3.f * (sigma * (width / layer_bounds.Width())));
+  const float vertical_radius =
+      std::ceil(3.f * (sigma * (height / layer_bounds.Height())));
+  const double max_kernel =
+      static_cast<double>(std::numeric_limits<int32_t>::max()) - 1.0;
+  if (!std::isfinite(horizontal_radius) || !std::isfinite(vertical_radius) ||
+      std::ceil(static_cast<double>(horizontal_radius)) > max_kernel ||
+      std::ceil(static_cast<double>(vertical_radius)) > max_kernel) {
+    return false;
+  }
+
+  width = std::ceil(width + 2.f * horizontal_radius);
+  if (!valid_dimension(width)) {
+    return false;
+  }
+  height = std::ceil(height + 2.f * vertical_radius);
+  return valid_dimension(height);
+}
+
 std::shared_ptr<HWFilter> HWFilters::HandleMaskFilter(
     std::shared_ptr<HWFilter> input, std::shared_ptr<MaskFilter> mask_filter,
     Vec2 scale) {
   auto radius = mask_filter->GetBlurRadius();
+  if (mask_filter->GetBlurType() == BlurType::kGaussianSigma) {
+    auto sigma = mask_filter->GetBlurSigma();
+    return HWFilters::Blur(radius, radius, scale, input,
+                           BlurType::kGaussianSigma, Vec2{sigma});
+  }
   return HWFilters::Blur(radius, radius, scale, input);
 }
 std::shared_ptr<HWFilter> HWFilters::HandleColorFilter(
@@ -161,7 +246,8 @@ std::shared_ptr<HWFilter> HWFilters::ConvertPaintToHWFilter(const Paint& paint,
 
 std::shared_ptr<HWFilter> HWFilters::Blur(float radius_x, float radius_y,
                                           Vec2 scale,
-                                          std::shared_ptr<HWFilter> input) {
+                                          std::shared_ptr<HWFilter> input,
+                                          BlurType blur_type, Vec2 sigma) {
   float max_scaled_radius = std::max(radius_x * scale.x, radius_y * scale.y);
 
   /**
@@ -173,16 +259,20 @@ std::shared_ptr<HWFilter> HWFilters::Blur(float radius_x, float radius_y,
    * For now we restrict the condition to trigger this downsampler pass to make
    * sure most blur case is rendered correct.
    */
+  float max_scaled_sigma =
+      blur_type == BlurType::kGaussianSigma
+          ? std::max(sigma.x * scale.x, sigma.y * scale.y)
+          : radial_to_sigma(max_scaled_radius);
   auto downsample_scale =
-      calculate_blur_scale(radial_to_sigma(max_scaled_radius));
+      calculate_blur_scale(max_scaled_sigma, blur_type, max_scaled_radius);
   if (downsample_scale != 1.f) {
     input = std::make_shared<HWDownSamplerFilter>(input, downsample_scale);
   }
 
   input = std::make_shared<HWBlurFilter>(radius_x, Vec2{1, 0}, input,
-                                         downsample_scale);
+                                         downsample_scale, blur_type, sigma.x);
   input = std::make_shared<HWBlurFilter>(radius_y, Vec2{0, 1}, input,
-                                         downsample_scale);
+                                         downsample_scale, blur_type, sigma.y);
 
   return input;
 }

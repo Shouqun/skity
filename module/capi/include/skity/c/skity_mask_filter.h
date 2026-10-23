@@ -37,6 +37,14 @@ typedef enum {
 SKITY_C_API skity_mask_filter
 skity_mask_filter_create_blur(skity_blur_style style, float radius);
 
+/**
+ * @brief Create a normal-mask Gaussian blur with explicit standard deviation
+ *        sigma and three-sigma support in local coordinates.
+ * @return handle, or NULL for nonpositive/nonfinite sigma or nonfinite support
+ */
+SKITY_C_API skity_mask_filter
+skity_mask_filter_create_gaussian_blur(float sigma);
+
 /** @brief Release the mask filter handle and its underlying object. Safe on
  *         NULL. */
 SKITY_C_API void skity_mask_filter_destroy(skity_mask_filter filter);

@@ -4,6 +4,8 @@
 
 #include "src/render/hw/filters/hw_blur_filter.hpp"
 
+#include <cmath>
+
 #include "src/render/hw/draw/fragment/wgsl_blur_filter.hpp"
 #include "src/render/hw/draw/geometry/wgsl_filter_geometry.hpp"
 #include "src/render/hw/draw/step/color_step.hpp"
@@ -18,6 +20,20 @@ HWFilterOutput HWBlurFilter::Prepare(const HWFilterContext &context) {
   std::shared_ptr<GPUTexture> input_texture = child_output.texture;
   auto filter_radius = radius_ * downsample_scale_;
   auto transformed_radius = filter_radius * context.scale * direction_;
+  auto transformed_sigma =
+      sigma_ * downsample_scale_ * context.scale * direction_;
+  Vec2 expand = direction_ * radius_;
+  if (blur_type_ == BlurType::kGaussianSigma) {
+    // Downsampling rounds texture dimensions. Use the actual texel density
+    // and integer padding so the convolution and final quad share one grid.
+    const Vec2 density =
+        input_texture_size / Vec2{child_output.layer_bounds.Width(),
+                                   child_output.layer_bounds.Height()};
+    transformed_sigma = sigma_ * density * direction_;
+    transformed_radius = Vec2{std::ceil(3.f * transformed_sigma.x),
+                               std::ceil(3.f * transformed_sigma.y)};
+    expand = transformed_radius / density;
+  }
   auto output_texture_size = input_texture_size + Vec2{2} * transformed_radius;
   auto output_texture = CreateOutputTexture(
       input_texture->GetDescriptor().format, output_texture_size, context);
@@ -29,17 +45,18 @@ HWFilterOutput HWBlurFilter::Prepare(const HWFilterContext &context) {
 
   float radius =
       transformed_radius.x > 0 ? transformed_radius.x : transformed_radius.y;
+  float sigma =
+      transformed_sigma.x > 0 ? transformed_sigma.x : transformed_sigma.y;
 
   SetOutputTexture(output_texture);
 
   auto cmd = context.draw_context->arena_allocator->Make<Command>();
 
   PrepareWGXCMD(cmd, context.draw_context, input_texture, output_texture,
-                direction_, radius, uv_scale, uv_offset);
+                direction_, radius, sigma, uv_scale, uv_offset);
 
   AddCommand(cmd);
 
-  Vec2 expand = direction_ * radius_;
   auto layer_bounds =
       Rect::MakeLTRB(child_output.layer_bounds.Left() - expand.x,
                      child_output.layer_bounds.Top() - expand.y,
@@ -56,10 +73,11 @@ void HWBlurFilter::PrepareWGXCMD(
     Command *cmd, HWDrawContext *context,
     const std::shared_ptr<GPUTexture> &texture,
     const std::shared_ptr<GPUTexture> &output_texture, const Vec2 &dir,
-    float radius, Vec2 uv_scale, Vec2 uv_offset) {
+    float radius, float sigma, Vec2 uv_scale, Vec2 uv_offset) {
   ColorStep step{context->arena_allocator->Make<WGSLFilterGeometry>(1.0f, 1.0f),
                  context->arena_allocator->Make<WGSLBlurFilter>(
-                     texture, dir, radius, uv_scale, uv_offset),
+                     texture, dir, radius, uv_scale, uv_offset, blur_type_,
+                     sigma),
                  CoverageType::kNone};
 
   HWDrawStepContext step_context{
