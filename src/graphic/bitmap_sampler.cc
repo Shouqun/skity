@@ -43,7 +43,7 @@ Vec4 BitmapSampler::SampleUnitNearest(Vec2 uv) const {
   return SampleXY({uv.x * w, uv.y * h});
 }
 
-Vec4 BitmapSampler::SampleUnitLinear(Vec2 uv) const {
+Color BitmapSampler::SampleUnitLinear(Vec2 uv) const {
   uint32_t w = bitmap_.Width();
   uint32_t h = bitmap_.Height();
 
@@ -92,17 +92,25 @@ Vec4 BitmapSampler::SampleUnitLinear(Vec2 uv) const {
   // change interpolation/premultiplication and are deliberately excluded.
   if ((ci0j0 | ci1j0 | ci0j1 | ci1j1) == 0 &&
       std::isfinite(a) && std::isfinite(b)) {
-    return {0.f, 0.f, 0.f, 0.f};
+    return Color_TRANSPARENT;
   }
-  Vec4 ti0j0 = Color4fFromColor(ci0j0);
-  Vec4 ti1j0 = Color4fFromColor(ci1j0);
-  Vec4 ti0j1 = Color4fFromColor(ci0j1);
-  Vec4 ti1j1 = Color4fFromColor(ci1j1);
-
-  return ((1 - a) * (1 - b) * ti0j0) +  //
-         (a * (1 - b) * ti1j0) +        //
-         ((1 - a) * b * ti0j1) +        //
-         (a * b * ti1j1);
+  const auto sample = [this](Color color) {
+    return Color4fFromColor(bitmap_.GetAlphaType() == kUnpremul_AlphaType
+                                ? ColorToPMColor(color)
+                                : color);
+  };
+  const Vec4 ti0j0 = sample(ci0j0);
+  const Vec4 ti1j0 = sample(ci1j0);
+  const Vec4 ti0j1 = sample(ci0j1);
+  const Vec4 ti1j1 = sample(ci1j1);
+  const Color premultiplied = Color4fToColor(
+      ((1 - a) * (1 - b) * ti0j0) +  //
+      (a * (1 - b) * ti1j0) +        //
+      ((1 - a) * b * ti0j1) +        //
+      (a * b * ti1j1));
+  return bitmap_.GetAlphaType() == kUnpremul_AlphaType
+             ? PMColorToColor(premultiplied)
+             : premultiplied;
 }
 
 Color BitmapSampler::GetColor(Vec2 uv) const {
@@ -126,15 +134,14 @@ Color BitmapSampler::GetColor(Vec2 uv) const {
   Color color;
   // The SW backend does not implement cubic resampling; fall back to bilinear.
   if (sampling_options_.UseCubic()) {
-    color = Color4fToColor(SampleUnitLinear(uv));
-    return color;
+    return SampleUnitLinear(uv);
   }
   switch (sampling_options_.filter) {
     case FilterMode::kNearest:
       color = Color4fToColor(SampleUnitNearest(uv));
       break;
     case FilterMode::kLinear:
-      color = Color4fToColor(SampleUnitLinear(uv));
+      color = SampleUnitLinear(uv);
       break;
   }
   return color;
