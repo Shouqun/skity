@@ -19,6 +19,11 @@ enum BlurStyle : int {
   kInner,       // fuzzy inside, nothing outside
 };
 
+enum class BlurType {
+  kRadius,
+  kGaussianSigma,
+};
+
 class SKITY_API MaskFilter : public Flattenable {
  public:
   MaskFilter() = default;
@@ -28,6 +33,12 @@ class SKITY_API MaskFilter : public Flattenable {
   BlurStyle GetBlurStyle() const { return style_; }
 
   float GetBlurRadius() const { return radius_; }
+
+  BlurType GetBlurType() const { return type_; }
+
+  // Gaussian standard deviation. Legacy filters retain their radius-to-sigma
+  // convention; explicit Gaussian filters retain the supplied sigma.
+  float GetBlurSigma() const;
 
   std::string_view ProcName() const override;
 
@@ -43,9 +54,19 @@ class SKITY_API MaskFilter : public Flattenable {
    */
   static std::shared_ptr<MaskFilter> MakeBlur(BlurStyle style, float radius);
 
+  /**
+   * Create a normal-mask Gaussian blur with standard deviation sigma and
+   * three-sigma support, in local coordinates. Positive fractional support
+   * includes the next outward sample. Returns null for nonpositive/nonfinite
+   * sigma or support that cannot be represented as a finite float.
+   */
+  static std::shared_ptr<MaskFilter> MakeGaussianBlur(float sigma);
+
  private:
   BlurStyle style_ = {};
   float radius_ = {};
+  BlurType type_ = BlurType::kRadius;
+  float sigma_ = {};
 };
 
 }  // namespace skity

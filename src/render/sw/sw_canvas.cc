@@ -898,9 +898,16 @@ void SWCanvas::HandleFilter(uint32_t count, const GlyphID* glyphs,
                            work_paint);
 
   if (mask_filter) {
-    ImageFilterBase::BlurBitmapToCanvas(this, bitmap, filter_bounds, work_paint,
-                                        mask_filter->GetBlurRadius(),
-                                        mask_filter->GetBlurRadius());
+    if (mask_filter->GetBlurType() == BlurType::kGaussianSigma) {
+      ImageFilterBase::GaussianBlurBitmapToCanvas(
+          this, bitmap, filter_bounds, work_paint, mask_filter->GetBlurSigma(),
+          mask_filter->GetBlurSigma());
+    } else {
+      ImageFilterBase::BlurBitmapToCanvas(this, bitmap, filter_bounds,
+                                          work_paint,
+                                          mask_filter->GetBlurRadius(),
+                                          mask_filter->GetBlurRadius());
+    }
   } else {
     image_filter->OnFilter(this, bitmap, filter_bounds, work_paint);
   }

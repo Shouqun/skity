@@ -254,6 +254,7 @@ std::shared_ptr<Data> ReadBuffer::ReadByteArrayAsData() {
 
 std::shared_ptr<Flattenable> ReadBuffer::ReadRawFlattenable() {
   FactoryProc factory = nullptr;
+  uint32_t size_recorded = 0;
 
   std::string factory_name;
 
@@ -264,8 +265,7 @@ std::shared_ptr<Flattenable> ReadBuffer::ReadRawFlattenable() {
       return {};
     }
 
-    uint32_t size_recorded = this->ReadU32();
-    (void)size_recorded;
+    size_recorded = this->ReadU32();
 
     factory_name = this->GetFactoryName(factory_index - 1);
 
@@ -299,8 +299,14 @@ std::shared_ptr<Flattenable> ReadBuffer::ReadRawFlattenable() {
 
     factory = factory_to_proc(factory_name);
 
-    uint32_t size_recorded = this->ReadU32();  // skip the size
-    (void)size_recorded;
+    size_recorded = this->ReadU32();
+  }
+
+  // This additive format has a fixed version/sigma payload. Keep legacy
+  // readers compatible while rejecting mismatched/truncated new envelopes.
+  if (factory_name == "SkityGaussianMaskFilter" &&
+      !Validate(size_recorded == 8 && IsAvailable(size_recorded))) {
+    return {};
   }
 
   if (!Validate(factory != nullptr)) {
