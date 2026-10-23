@@ -229,3 +229,32 @@ TEST(BitmapSampler, TileModeMirror) {
   EXPECT_EQ(sampler.GetColor({1.75f, 0.f}), skity::Color_RED);
   EXPECT_EQ(sampler.GetColor({2.25f, 0.f}), skity::Color_RED);
 }
+
+TEST(BitmapSampler, LinearDecalKeepsPartialPixelSupportOutsideImage) {
+  // A single opaque texel has a triangular linear-filter footprint extending
+  // half a texel outside each edge. Use premultiplied storage to isolate
+  // footprint coverage from the separate straight-alpha interpolation fix.
+  skity::Bitmap bitmap(1, 1, skity::kPremul_AlphaType, skity::ColorType::kRGBA);
+  bitmap.SetPixel(0, 0, skity::Color_RED);
+  const skity::SamplingOptions linear(skity::FilterMode::kLinear,
+                                      skity::MipmapMode::kNone);
+  skity::BitmapSampler sampler(bitmap, linear, skity::TileMode::kDecal,
+                               skity::TileMode::kDecal);
+  struct Sample { float x; unsigned alpha; };
+  // The sampler's established integer conversion truncates 255/2 and 255/4.
+  const Sample samples[] = {{-.5f, 0}, {-.25f, 63}, {0.f, 127}, {.5f, 255},
+                            {1.f, 127}, {1.25f, 63}, {1.5f, 0}};
+  for (const auto& sample : samples) {
+    SCOPED_TRACE(sample.x);
+    const auto color = sampler.GetColor({sample.x, .5f});
+    EXPECT_EQ(ColorGetA(color), sample.alpha);
+    EXPECT_EQ(ColorGetR(color), sample.alpha);
+    EXPECT_EQ(ColorGetG(color), 0u);
+    EXPECT_EQ(ColorGetB(color), 0u);
+  }
+  skity::BitmapSampler nearest(bitmap,
+      skity::SamplingOptions(skity::FilterMode::kNearest, skity::MipmapMode::kNone),
+      skity::TileMode::kDecal, skity::TileMode::kDecal);
+  EXPECT_EQ(nearest.GetColor({-.25f, .5f}), skity::Color_TRANSPARENT);
+  EXPECT_EQ(nearest.GetColor({0.f, .5f}), skity::Color_RED);
+}
