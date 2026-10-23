@@ -229,3 +229,69 @@ TEST_F(SaveLayerPixelGridTest, ReflectedLayersPreserveParentClipWithMultisamplin
 
 }  // namespace
 }  // namespace skity
+
+// Standalone regression candidate. Append to save_layer_pixel_grid_test.mm.
+#include "src/gpu/gpu_context_impl.hpp"
+#include "src/render/text/glyph_run.hpp"
+
+namespace skity {
+namespace {
+
+TEST_F(SaveLayerPixelGridTest, NativePhaseQuadUsesIntegerBaselineOrigin) {
+  @autoreleasepool {
+    auto face = FontManager::RefDefault()->MakeFromFile(
+        SKITY_FONT_DIR "fonts/resources/NotoSansCJK-Regular.ttc", 0);
+    ASSERT_NE(face, nullptr);
+    ASSERT_FALSE(face->ContainsColorTable());
+    const GlyphID glyph = face->UnicharToGlyph('W');
+    ASSERT_NE(glyph, 0);
+    Font font(face, 24.f);
+    font.SetSubpixel(true);
+    font.SetBaselineSnap(true);
+    Paint paint;
+    paint.SetStyle(Paint::kFill_Style);
+    paint.SetColor(Color_BLACK);
+    auto* implementation = static_cast<GPUContextImpl*>(context_.get());
+    ASSERT_NE(implementation->GetAtlasManager(), nullptr);
+
+    for (float integer_origin : {17.f, -18.f}) {
+      for (uint32_t phase = 0; phase != 4; ++phase) {
+        const float baseline_x = integer_origin + phase * 0.25f;
+        constexpr float baseline_y = 48.f;
+        SCOPED_TRACE(::testing::Message() << "baseline_x=" << baseline_x);
+        const GlyphData* data = nullptr;
+        font.LoadGlyphBitmapAtPhase(&glyph, 1, &data, paint, phase);
+        ASSERT_NE(data, nullptr);
+        // Copy only the independently queried placement metadata before atlas
+        // population can reuse the font backend's scratch surface.
+        const GlyphBitmapData mask = data->Image();
+        ASSERT_EQ(mask.format, BitmapFormat::kGray8);
+        ASSERT_GT(mask.width, 0.f);
+        ASSERT_GT(mask.height, 0.f);
+
+        ArenaAllocator arena;
+        const float position_x[] = {0.f};
+        const float position_y[] = {0.f};
+        bool fell_back_to_path = false;
+        auto runs = GlyphRun::Make(
+            1, &glyph, Point{baseline_x, baseline_y, 0.f, 1.f}, position_x, position_y,
+            font, paint, 1.f, Matrix{}, implementation->GetAtlasManager(),
+            &arena, [&](const Path&, const Paint&) { fell_back_to_path = true; });
+        ASSERT_EQ(runs.size(), 1u);
+        ASSERT_TRUE(runs[0]->HasCoverageMask());
+        ASSERT_NE(runs[0]->Draw(Matrix{}, Matrix{}, &arena, 1.f, false), nullptr);
+        ASSERT_FALSE(fell_back_to_path);
+        const Rect bounds = runs[0]->GetBounds();
+        // This tests the atlas-quad placement separately from the scaler's
+        // choice of bitmap bounds; no glyph pixel golden is constructed.
+        EXPECT_FLOAT_EQ(bounds.Left(), std::floor(baseline_x) + mask.origin_x);
+        EXPECT_FLOAT_EQ(bounds.Top(), baseline_y - mask.origin_y);
+        EXPECT_FLOAT_EQ(bounds.Width(), mask.width);
+        EXPECT_FLOAT_EQ(bounds.Height(), mask.height);
+      }
+    }
+  }
+}
+
+}  // namespace
+}  // namespace skity
