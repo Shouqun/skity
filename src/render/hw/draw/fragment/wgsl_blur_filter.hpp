@@ -6,6 +6,7 @@
 #define SRC_RENDER_HW_DRAW_FRAGMENT_WGSL_BLUR_FILTER_HPP
 
 #include <memory>
+#include <skity/effect/mask_filter.hpp>
 
 #include "src/gpu/gpu_texture.hpp"
 #include "src/render/hw/draw/hw_wgsl_fragment.hpp"
@@ -15,7 +16,8 @@ namespace skity {
 class WGSLBlurFilter : public HWWGSLFragment {
  public:
   WGSLBlurFilter(std::shared_ptr<GPUTexture> texture, Vec2 dir, float radius,
-                 Vec2 uv_scale, Vec2 uv_offset);
+                 Vec2 uv_scale, Vec2 uv_offset,
+                 BlurType blur_type = BlurType::kRadius, float sigma = 0.f);
 
   ~WGSLBlurFilter() override = default;
 
@@ -33,6 +35,8 @@ class WGSLBlurFilter : public HWWGSLFragment {
   float radius_;
   Vec2 uv_scale_;
   Vec2 uv_offset_;
+  BlurType blur_type_;
+  float sigma_;
 };
 
 }  // namespace skity

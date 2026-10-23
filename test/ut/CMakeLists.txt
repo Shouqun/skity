@@ -38,6 +38,7 @@ add_executable(skity_unit_test
     render/hw/hw_pipeline_key_test.cc
     render/hw/hw_sub_layer_discard_test.cc
     render/hw/precompile_test.cc
+    render/hw/gaussian_bounds_test.cc
     render/hw/dst_read_strategy_test.cc
     render/hw/hw_blend_plan_test.cc
     render/hw/hw_texture_copy_info_test.cc
@@ -180,6 +181,14 @@ if (${SKITY_CAPI_MODULE})
     )
 
     target_link_libraries(skity_unit_test PUBLIC skity::capi)
+endif()
+
+if (${SKITY_IO_MODULE})
+    target_sources(skity_unit_test PRIVATE io/mask_filter_serialization_test.cc)
+    target_include_directories(skity_unit_test PRIVATE
+        ${CMAKE_SOURCE_DIR}/module/io
+    )
+    target_link_libraries(skity_unit_test PUBLIC skity::io)
 endif()
 
 # no-rtti

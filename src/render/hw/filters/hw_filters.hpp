@@ -20,9 +20,17 @@ class HWFilters {
   static std::shared_ptr<HWFilter> ConvertPaintToHWFilter(const Paint& paint,
                                                           Vec2 scale);
 
+  // Checks the explicit Gaussian layer and both blur passes before texture
+  // dimensions or shader kernel bounds are narrowed to integers.
+  static bool GaussianBlurIsRepresentable(float sigma, const Rect& layer_bounds,
+                                           Vec2 scale,
+                                           uint32_t max_texture_size);
+
   static std::shared_ptr<HWFilter> Blur(float radius_x, float radius_y,
                                         Vec2 scale,
-                                        std::shared_ptr<HWFilter> input);
+                                        std::shared_ptr<HWFilter> input,
+                                        BlurType blur_type = BlurType::kRadius,
+                                        Vec2 sigma = Vec2{0});
   static std::shared_ptr<HWFilter> ColorFilter(std::shared_ptr<ColorFilter> cf,
                                                std::shared_ptr<HWFilter> input);
 

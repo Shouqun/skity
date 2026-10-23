@@ -280,6 +280,12 @@ inline std::shared_ptr<MaskFilter> MakeMaskFilterBlur(BlurStyle style,
       &skity_mask_filter_destroy, SKITY_OBJECT_TYPE_MASK_FILTER);
 }
 
+inline std::shared_ptr<MaskFilter> MakeMaskFilterGaussianBlur(float sigma) {
+  return adopt_handle<skity_mask_filter_s, MaskFilter, skity_mask_filter>(
+      skity_mask_filter_create_gaussian_blur(sigma),
+      &skity_mask_filter_destroy, SKITY_OBJECT_TYPE_MASK_FILTER);
+}
+
 inline std::shared_ptr<PathEffect> MakePathEffectDiscrete(float seg_length,
                                                           float dev,
                                                           uint32_t seed) {

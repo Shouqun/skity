@@ -16,12 +16,15 @@
 namespace skity {
 
 WGSLBlurFilter::WGSLBlurFilter(std::shared_ptr<GPUTexture> texture, Vec2 dir,
-                               float radius, Vec2 uv_scale, Vec2 uv_offset)
+                               float radius, Vec2 uv_scale, Vec2 uv_offset,
+                               BlurType blur_type, float sigma)
     : texture_(std::move(texture)),
       dir_(dir),
       radius_(radius),
       uv_scale_(uv_scale),
-      uv_offset_(uv_offset) {}
+      uv_offset_(uv_offset),
+      blur_type_(blur_type),
+      sigma_(sigma) {}
 
 uint32_t WGSLBlurFilter::NextBindingIndex() const { return 3; }
 
@@ -30,12 +33,15 @@ HWFunctionBaseKey WGSLBlurFilter::GetMainKey() const {
 }
 
 std::string WGSLBlurFilter::GenSourceWGSL() const {
+  // Both contracts use the same source under kBlur; only uniforms differ.
   return R"(
     struct BlurFragSlot {
       dir        : vec2<f32>,
       uv_scale   : vec2<f32>,
       uv_offset  : vec2<f32>,
       radius     : f32,
+      sigma      : f32,
+      blur_type  : u32,
     };
 
 
@@ -52,12 +58,24 @@ std::string WGSLBlurFilter::GenSourceWGSL() const {
     }
 
     fn calculate_blur_norm(radius: f32) -> f32 {
+      if blur_slot.blur_type == u32(1) {
+        // The common Gaussian normalization cancels against the total.
+        // A unit center also stays finite for subnormal positive sigma.
+        return 1.0;
+      }
       var sigma : f32 = convert_radius_to_sigma(radius);
 
       return 1.0 / (sqrt(2.0 * 3.1415926) * sigma);
     }
 
     fn calculate_blur_coffe(radius: f32, norm: f32, step: f32) -> f32 {
+      if blur_slot.blur_type == u32(1) {
+        if !(blur_slot.sigma > 0.0) {
+          return 0.0;
+        }
+        var normalized_step : f32 = step / blur_slot.sigma;
+        return exp(-0.5 * normalized_step * normalized_step);
+      }
       var sigma: f32 = convert_radius_to_sigma(radius);
 
       return norm * exp(-0.5 * step * step / (sigma * sigma));
@@ -78,8 +96,11 @@ std::string WGSLBlurFilter::GenSourceWGSL() const {
       var acc      : vec4<f32> = decl_texture(uv) * norm;
 
       var kernel_size : i32 = i32(radius);
-      // A fractional radius (0 < radius < 1) must still sample its immediate
-      // neighborhood, otherwise small sigma collapses to identity.
+      if blur_slot.blur_type == u32(1) {
+        // The explicit Gaussian contract carries its three-sigma support.
+        kernel_size = i32(ceil(radius));
+      }
+      // Preserve the legacy immediate-neighbor kernel for positive radii.
       if (kernel_size < 1) {
         kernel_size = 1;
       }
@@ -107,6 +128,9 @@ std::string WGSLBlurFilter::GenSourceWGSL() const {
 
       var result : vec4<f32> = textureSample(uTexture, uSampler, uv);
       if blur_radius > 0.0 {
+        if blur_slot.blur_type == u32(1) && !(blur_slot.sigma > 0.0) {
+          return result;
+        }
         return calculate_blur(uv, dir, blur_radius);
       } else {
         return result;
@@ -139,6 +163,9 @@ void WGSLBlurFilter::PrepareCMD(Command* cmd, HWDrawContext* context) {
     auto slot_struct =
         static_cast<wgx::StructDefinition*>(slot_entry->type_definition.get());
     slot_struct->GetMember("radius")->type->SetData(radius_);
+    slot_struct->GetMember("sigma")->type->SetData(sigma_);
+    uint32_t blur_type = blur_type_ == BlurType::kGaussianSigma ? 1u : 0u;
+    slot_struct->GetMember("blur_type")->type->SetData(blur_type);
     slot_struct->GetMember("uv_scale")->type->SetData(uv_scale_);
     slot_struct->GetMember("uv_offset")->type->SetData(uv_offset_);
 

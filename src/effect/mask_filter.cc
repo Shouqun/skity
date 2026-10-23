@@ -26,9 +26,21 @@ constexpr float radial_to_sigma(float radius) {
 
 }  // namespace
 
-std::string_view MaskFilter::ProcName() const { return "SkBlurMaskFilterImpl"; }
+float MaskFilter::GetBlurSigma() const {
+  return type_ == BlurType::kGaussianSigma ? sigma_ : radial_to_sigma(radius_);
+}
+
+std::string_view MaskFilter::ProcName() const {
+  return type_ == BlurType::kGaussianSigma ? "SkityGaussianMaskFilter"
+                                          : "SkBlurMaskFilterImpl";
+}
 
 void MaskFilter::FlattenToBuffer(WriteBuffer& buffer) const {
+  if (type_ == BlurType::kGaussianSigma) {
+    buffer.WriteUint32(1);  // Explicit Gaussian-sigma wire version.
+    buffer.WriteFloat(sigma_);
+    return;
+  }
   buffer.WriteFloat(radial_to_sigma(radius_));
   buffer.WriteInt32(static_cast<int32_t>(style_) - 1);
   buffer.WriteUint32(0);  // respectCTM, ignore it
@@ -47,11 +59,30 @@ std::shared_ptr<MaskFilter> MaskFilter::MakeBlur(BlurStyle style,
   return filter;
 }
 
+std::shared_ptr<MaskFilter> MaskFilter::MakeGaussianBlur(float sigma) {
+  const float radius = 3.f * sigma;
+  if (!(sigma > 0.f) || !std::isfinite(sigma) || !std::isfinite(radius)) {
+    return nullptr;
+  }
+  auto filter = std::make_shared<MaskFilter>();
+  filter->style_ = BlurStyle::kNormal;
+  filter->radius_ = radius;
+  filter->type_ = BlurType::kGaussianSigma;
+  filter->sigma_ = sigma;
+  return filter;
+}
+
 #if defined(SKITY_CPU)
 void MaskFilterOnFilter(Canvas* canvas, Bitmap& bitmap,
                         const Rect& filter_bounds, const Paint& paint,
                         MaskFilter* mask_filter) {
   float radius = mask_filter->GetBlurRadius();
+  if (mask_filter->GetBlurType() == BlurType::kGaussianSigma) {
+    const float sigma = mask_filter->GetBlurSigma();
+    ImageFilterBase::GaussianBlurBitmapToCanvas(canvas, bitmap, filter_bounds,
+                                               paint, sigma, sigma);
+    return;
+  }
   if (mask_filter->GetBlurStyle() == BlurStyle::kNormal) {
     ImageFilterBase::BlurBitmapToCanvas(canvas, bitmap, filter_bounds, paint,
                                         radius, radius);

@@ -55,6 +55,12 @@ class ImageFilterBase : public ImageFilter {
   static void BlurBitmapToCanvas(Canvas* canvas, Bitmap& bitmap,
                                  const Rect& filter_bounds, const Paint& paint,
                                  float radius_x, float radius_y);
+  // Explicit Gaussian sigmas; each axis uses finite three-sigma support.
+  // The bitmap already contains the source paint's alpha and color filter.
+  static void GaussianBlurBitmapToCanvas(Canvas* canvas, Bitmap& bitmap,
+                                         const Rect& filter_bounds,
+                                         const Paint& paint, float sigma_x,
+                                         float sigma_y);
   virtual void OnFilter(Canvas*, Bitmap&, const Rect&, const Paint&) const {}
 #endif
   ~ImageFilterBase() override = default;

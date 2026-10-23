@@ -171,6 +171,13 @@ skity_mask_filter skity_mask_filter_create_blur(skity_blur_style style,
       SKITY_OBJECT_TYPE_MASK_FILTER, SKITY_HANDLE_OWNING, std::move(sp));
 }
 
+skity_mask_filter skity_mask_filter_create_gaussian_blur(float sigma) {
+  auto sp = skity::MaskFilter::MakeGaussianBlur(sigma);
+  if (sp == nullptr) return nullptr;
+  return skity::capi::alloc_handle<skity_mask_filter_s>(
+      SKITY_OBJECT_TYPE_MASK_FILTER, SKITY_HANDLE_OWNING, std::move(sp));
+}
+
 void skity_mask_filter_destroy(skity_mask_filter filter) {
   skity::capi::destroy_handle<skity_mask_filter_s>(
       filter, SKITY_OBJECT_TYPE_MASK_FILTER);
