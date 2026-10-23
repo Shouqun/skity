@@ -8,6 +8,7 @@
 #include <cstring>
 #include <iterator>
 #include <skity/geometry/matrix.hpp>
+#include <skity/effect/shader.hpp>
 #include <skity/io/data.hpp>
 #include <skity/text/font.hpp>
 #include <skity/text/font_arguments.hpp>
@@ -604,6 +605,172 @@ TEST(CoreTextScalerContextTest,
                 tight_row_bytes);
   }
   EXPECT_EQ(second_pixels, first_pixels);
+}
+
+}  // namespace
+}  // namespace skity
+
+// Standalone regression candidate. Append to coretext_typeface_test.cc.
+#include <cmath>
+#include <utility>
+
+namespace skity {
+namespace {
+
+struct NativePhaseSnapshot {
+  GlyphBitmapData metadata;
+  std::vector<uint8_t> pixels;
+};
+
+NativePhaseSnapshot CopyNativePhaseSnapshot(const Font& font, GlyphID glyph,
+                                          const Paint& paint, uint32_t phase) {
+  const GlyphData* data = nullptr;
+  font.LoadGlyphBitmapAtPhase(&glyph, 1, &data, paint, phase);
+  EXPECT_NE(data, nullptr);
+  if (!data) {
+    return {};
+  }
+  NativePhaseSnapshot result;
+  result.metadata = data->Image();
+  const auto& image = result.metadata;
+  EXPECT_EQ(image.format, BitmapFormat::kGray8);
+  EXPECT_NE(image.buffer, nullptr);
+  EXPECT_GT(image.width, 0.f);
+  EXPECT_GT(image.height, 0.f);
+  const size_t width = static_cast<size_t>(image.width);
+  const size_t height = static_cast<size_t>(image.height);
+  EXPECT_GE(image.RowBytes(), width);
+  if (image.format != BitmapFormat::kGray8 || !image.buffer || !width ||
+      !height || image.RowBytes() < width) {
+    return result;
+  }
+  result.pixels.resize(width * height);
+  for (size_t y = 0; y < height; ++y) {
+    std::memcpy(result.pixels.data() + y * width,
+                image.buffer + y * image.RowBytes(), width);
+  }
+  // The engine's borrowed scratch pointer must never escape this snapshot.
+  result.metadata.buffer = nullptr;
+  return result;
+}
+
+void ExpectNativePhaseSnapshotEqual(const NativePhaseSnapshot& first,
+                                    const NativePhaseSnapshot& second) {
+  EXPECT_FLOAT_EQ(first.metadata.origin_x, second.metadata.origin_x);
+  EXPECT_FLOAT_EQ(first.metadata.origin_y, second.metadata.origin_y);
+  EXPECT_FLOAT_EQ(first.metadata.origin_x_for_raster,
+                  second.metadata.origin_x_for_raster);
+  EXPECT_FLOAT_EQ(first.metadata.origin_y_for_raster,
+                  second.metadata.origin_y_for_raster);
+  EXPECT_FLOAT_EQ(first.metadata.width, second.metadata.width);
+  EXPECT_FLOAT_EQ(first.metadata.height, second.metadata.height);
+  EXPECT_EQ(first.metadata.format, second.metadata.format);
+  EXPECT_EQ(first.pixels, second.pixels);
+}
+
+TEST(CoreTextNativePhaseTest, IntegerAtlasOriginRetainsRequestedRasterPhase) {
+  auto typeface = FontManager::RefDefault()->MakeFromFile(kNotoSansCjkTtc, 0);
+  ASSERT_NE(typeface, nullptr);
+  ASSERT_FALSE(typeface->ContainsColorTable());
+  const GlyphID glyph = typeface->UnicharToGlyph('W');
+  ASSERT_NE(glyph, 0);
+  Paint paint;
+  paint.SetStyle(Paint::kFill_Style);
+  paint.SetColor(Color_BLACK);
+  for (float size : {13.f, 24.f, 48.f}) {
+    Font font(typeface, size);
+    font.SetSubpixel(true);
+    font.SetBaselineSnap(true);
+    std::vector<NativePhaseSnapshot> phases;
+    for (uint32_t phase = 0; phase != 4; ++phase) {
+      SCOPED_TRACE(::testing::Message() << "size=" << size << " phase=" << phase);
+      NativePhaseSnapshot snapshot =
+          CopyNativePhaseSnapshot(font, glyph, paint, phase);
+      ASSERT_FALSE(snapshot.pixels.empty());
+      ASSERT_TRUE(std::any_of(snapshot.pixels.begin(), snapshot.pixels.end(),
+                              [](uint8_t alpha) { return alpha != 0; }));
+      const auto& image = snapshot.metadata;
+      // Atlas placement has an integer baseline origin. The requested fraction
+      // belongs only to rasterization inside that integer-positioned bitmap.
+      EXPECT_FLOAT_EQ(image.origin_x, std::floor(image.origin_x));
+      EXPECT_FLOAT_EQ(image.origin_y, std::floor(image.origin_y));
+      EXPECT_NEAR(image.origin_x + image.origin_x_for_raster,
+                  static_cast<float>(phase) * 0.25f, 0.00001f);
+      phases.push_back(std::move(snapshot));
+    }
+    // Revisit each phase after the reusable Core Graphics scratch surface was
+    // used by other phases. Compare independent copied bytes, never pointers.
+    for (uint32_t phase = 0; phase != 4; ++phase) {
+      ExpectNativePhaseSnapshotEqual(
+          phases[phase], CopyNativePhaseSnapshot(font, glyph, paint, phase));
+    }
+  }
+}
+
+TEST(CoreTextNativePhaseTest, OutOfRangePhasePreservesLegacyFallback) {
+  auto typeface = FontManager::RefDefault()->MakeFromFile(kNotoSansCjkTtc, 0);
+  ASSERT_NE(typeface, nullptr);
+  const GlyphID glyph = typeface->UnicharToGlyph('W');
+  ASSERT_NE(glyph, 0);
+  Font font(typeface, 24.f);
+  Paint paint;
+  const NativePhaseSnapshot invalid =
+      CopyNativePhaseSnapshot(font, glyph, paint, 4);
+  ASSERT_FALSE(invalid.pixels.empty());
+
+  const GlyphData* legacy_data = nullptr;
+  font.LoadGlyphBitmap(&glyph, 1, &legacy_data, paint, 1.f, Matrix{});
+  ASSERT_NE(legacy_data, nullptr);
+  const GlyphBitmapData legacy = legacy_data->Image();
+  ASSERT_NE(legacy.buffer, nullptr);
+  ASSERT_EQ(legacy.format, BitmapFormat::kGray8);
+  NativePhaseSnapshot expected;
+  expected.metadata = legacy;
+  const size_t width = static_cast<size_t>(legacy.width);
+  const size_t height = static_cast<size_t>(legacy.height);
+  ASSERT_GE(legacy.RowBytes(), width);
+  expected.pixels.resize(width * height);
+  for (size_t y = 0; y < height; ++y) {
+    std::memcpy(expected.pixels.data() + y * width,
+                legacy.buffer + y * legacy.RowBytes(), width);
+  }
+  expected.metadata.buffer = nullptr;
+  ExpectNativePhaseSnapshotEqual(invalid, expected);
+}
+
+TEST(CoreTextNativePhaseTest, ShaderPaintPreservesLegacyRasterFallback) {
+  auto typeface = FontManager::RefDefault()->MakeFromFile(kNotoSansCjkTtc, 0);
+  ASSERT_NE(typeface, nullptr);
+  const GlyphID glyph = typeface->UnicharToGlyph('W');
+  ASSERT_NE(glyph, 0);
+  Font font(typeface, 24.f);
+  Paint paint;
+  const Point points[] = {{0.f, 0.f, 0.f, 1.f}, {16.f, 0.f, 0.f, 1.f}};
+  const Vec4 colors[] = {Vec4{1.f, 0.f, 0.f, 1.f},
+                        Vec4{0.f, 0.f, 1.f, 1.f}};
+  paint.SetShader(Shader::MakeLinear(points, colors, nullptr, 2));
+
+  const NativePhaseSnapshot phased =
+      CopyNativePhaseSnapshot(font, glyph, paint, 2);
+  ASSERT_FALSE(phased.pixels.empty());
+  const GlyphData* data = nullptr;
+  font.LoadGlyphBitmap(&glyph, 1, &data, paint, 1.f, Matrix{});
+  ASSERT_NE(data, nullptr);
+  const auto image = data->Image();
+  ASSERT_NE(image.buffer, nullptr);
+  ASSERT_EQ(image.format, BitmapFormat::kGray8);
+  const size_t width = static_cast<size_t>(image.width);
+  const size_t height = static_cast<size_t>(image.height);
+  ASSERT_GE(image.RowBytes(), width);
+  NativePhaseSnapshot legacy;
+  legacy.metadata = image;
+  legacy.pixels.resize(width * height);
+  for (size_t y = 0; y < height; ++y) {
+    std::memcpy(legacy.pixels.data() + y * width,
+                image.buffer + y * image.RowBytes(), width);
+  }
+  legacy.metadata.buffer = nullptr;
+  ExpectNativePhaseSnapshotEqual(legacy, phased);
 }
 
 }  // namespace

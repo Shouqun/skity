@@ -1595,8 +1595,10 @@ TEST(PrecompileDrawTest, TextFillAndStrokeMergePreservingInstanceColors) {
         &arena,
         [](const Path&, const Paint&) { ADD_FAILURE() << "Unexpected path"; });
     ASSERT_EQ(runs.size(), 2u);
-    auto* first = runs[0]->Draw(Matrix{}, Matrix{}, &arena, 1.f, false);
-    auto* second = runs[1]->Draw(Matrix{}, Matrix{}, &arena, 1.f, false);
+    // Isolate color/order merging under an explicitly shared sampler policy.
+    // Native A8 fills may otherwise require linear while strokes stay nearest.
+    auto* first = runs[0]->Draw(Matrix{}, Matrix{}, &arena, 1.f, true);
+    auto* second = runs[1]->Draw(Matrix{}, Matrix{}, &arena, 1.f, true);
     ASSERT_NE(first, nullptr);
     ASSERT_NE(second, nullptr);
     first->SetScissorBox(Rect::MakeWH(32.f, 32.f));
@@ -1639,6 +1641,58 @@ TEST(PrecompileDrawTest, TextFillAndStrokeMergePreservingInstanceColors) {
       EXPECT_EQ(*color, stroke ? paint.GetStrokeColor() : paint.GetFillColor());
     }
   }
+}
+
+TEST(PrecompileDrawTest, TextDrawMergeRequiresIdenticalSampler) {
+  FakeGPUContext context;
+  ASSERT_TRUE(context.Init());
+  ArenaAllocator arena;
+  TextGeometryData::BatchedTexture textures{};
+  GPUTextureDescriptor texture_desc{};
+  texture_desc.width = texture_desc.height = 32;
+  textures[0] = context.device()->CreateTexture(texture_desc);
+  ASSERT_NE(textures[0], nullptr);
+
+  GPUSamplerDescriptor nearest_desc{};
+  GPUSamplerDescriptor linear_desc = nearest_desc;
+  linear_desc.min_filter = GPUFilterMode::kLinear;
+  linear_desc.mag_filter = GPUFilterMode::kLinear;
+  auto nearest = context.device()->CreateSampler(nearest_desc);
+  auto linear = context.device()->CreateSampler(linear_desc);
+  ASSERT_NE(nearest, nullptr);
+  ASSERT_NE(linear, nullptr);
+  ASSERT_NE(nearest, linear);
+  // Preserve the real-device identity contract in the fake: equal descriptors
+  // share a sampler; distinct nearest/linear descriptors must not be aliased.
+  ASSERT_EQ(nearest, context.device()->CreateSampler(nearest_desc));
+  ASSERT_EQ(linear, context.device()->CreateSampler(linear_desc));
+  ASSERT_EQ(nearest->GetDescriptor().min_filter, GPUFilterMode::kNearest);
+  ASSERT_EQ(nearest->GetDescriptor().mag_filter, GPUFilterMode::kNearest);
+  ASSERT_EQ(linear->GetDescriptor().min_filter, GPUFilterMode::kLinear);
+  ASSERT_EQ(linear->GetDescriptor().mag_filter, GPUFilterMode::kLinear);
+
+  auto plan = ResolveHWBlendPlan(BlendMode::kSrcOver, true, false,
+                                 context.device()->GetCaps(), true);
+  ASSERT_TRUE(plan.has_value());
+  auto make_draw = [&](const std::shared_ptr<GPUSampler>& sampler) {
+    ArrayList<GlyphRect, 16> glyph_rects;
+    glyph_rects.SetArenaAllocator(&arena);
+    glyph_rects.emplace_back(Vec4{0.f, 0.f, 16.f, 16.f}, Vec2{0.f, 0.f},
+                             Vec2{16.f, 16.f});
+    auto* draw = arena.Make<HWDynamicTextDraw>(
+        Matrix{}, Matrix{}, std::move(glyph_rects), Paint{}, textures, sampler,
+        TextAtlasEffect::kA8Coverage, false);
+    draw->SetScissorBox(Rect::MakeWH(32.f, 32.f));
+    draw->SetClipDepth(0);
+    draw->SetBlendPlan(*plan);
+    return draw;
+  };
+
+  // Use fresh pairs because a successful merge consumes the second geometry.
+  EXPECT_TRUE(make_draw(nearest)->MergeIfPossible(make_draw(nearest)));
+  EXPECT_TRUE(make_draw(linear)->MergeIfPossible(make_draw(linear)));
+  EXPECT_FALSE(make_draw(nearest)->MergeIfPossible(make_draw(linear)));
+  EXPECT_FALSE(make_draw(linear)->MergeIfPossible(make_draw(nearest)));
 }
 
 TEST(PrecompileDrawTest, TextBlendRoutesKeepRunsWholeAndProtectDrawBoundaries) {
