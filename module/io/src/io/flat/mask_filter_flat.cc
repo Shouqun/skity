@@ -37,6 +37,19 @@ std::shared_ptr<MaskFilter> ReadBlurMaskFilterImpl(ReadBuffer& buffer) {
   return core_bridge::MakeMaskFilterBlur(style, sigma_to_radius(sigma));
 }
 
+std::shared_ptr<MaskFilter> ReadGaussianMaskFilter(ReadBuffer& buffer) {
+  const uint32_t version = buffer.ReadU32();
+  const float sigma = buffer.ReadFloat();
+  if (!buffer.Validate(buffer.IsValid() && version == 1)) {
+    return {};
+  }
+  auto filter = core_bridge::MakeMaskFilterGaussianBlur(sigma);
+  if (!buffer.Validate(filter != nullptr)) {
+    return {};
+  }
+  return filter;
+}
+
 void SkipShaderMaskFilter(ReadBuffer& buffer) { (void)buffer.ReadShader(); }
 
 }  // namespace
@@ -47,6 +60,8 @@ std::shared_ptr<Flattenable> ReadMaskFilterFromMemory(
     SkipEmbossMaskFilter(buffer);
   } else if (factory == "SkBlurMaskFilterImpl") {
     return ReadBlurMaskFilterImpl(buffer);
+  } else if (factory == "SkityGaussianMaskFilter") {
+    return ReadGaussianMaskFilter(buffer);
   } else if (factory == "SkShaderMaskFilterImpl" || factory == "SkShaderMF") {
   }
 
@@ -57,6 +72,7 @@ FactoryProc GetMaskFilterFactoryProc(const std::string& factory_name) {
   static std::vector<std::string> kMaskFilterFactories = {
       "SkEmbossMaskFilter",
       "SkBlurMaskFilterImpl",
+      "SkityGaussianMaskFilter",
       "SkShaderMaskFilterImpl",
       "SkShaderMF",
   };
