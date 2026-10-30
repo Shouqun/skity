@@ -167,3 +167,8 @@ unit runner. Commands, logs, the runner's structured reports and result.json
 stay in the work directory. A failed configure/build, missing case or skipped
 case is not a passing installed-package test. Private IO is not an installed
 SDK input and is outside this fixture's scope.
+
+GPU surfaces retire their canvas before releasing arena-backed stack storage.
+An abandoned, unflushed frame is safe to destroy with live nested layers.
+The ordinary Metal unit registry includes a deterministic surface-lifetime
+regression for this ownership order, including nested layer stacks.
