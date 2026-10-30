@@ -33,6 +33,10 @@ class SWCanvas : public Canvas {
 
     State() : clip_spans_() {}
     State(State const&) = default;
+#if defined(SKITY_CPP_ALLOCATION_RECOVERY)
+    State(State&&) noexcept = default;
+    State& operator=(State&&) noexcept = default;
+#endif
     State& operator=(State const&) = default;
 
     bool HasClip() const { return !clip_spans_.empty(); }

@@ -168,7 +168,79 @@ stay in the work directory. A failed configure/build, missing case or skipped
 case is not a passing installed-package test. Private IO is not an installed
 SDK input and is outside this fixture's scope.
 
+
+## C++ canvas allocation recovery
+
+`SKITY_CPP_ALLOCATION_RECOVERY=ON` enables exception unwinding and transactional
+canvas saves for C++ callers. The default remains OFF. Set both
+`SKITY_CAPI_MODULE=OFF` and `SKITY_UNIFIED_LIB=OFF`; incompatible export
+configurations are refused at configure time. This mode defines no new C error
+conversion or foreign-unwinding contract. Public C++ signatures stay unchanged.
+
+Catch allocation failures at the owning C++ transaction boundary. A refused
+Save preserves the caller's matrix, clip and save depth; successful Save keeps
+its ordinary return value. This is not a promise of general allocation recovery
+for every rendering operation. Retain the frame/resource and backend-specific
+failure checks appropriate to the operation being used.
+
+The unit framework registers the strict allocation-recovery fixture in this
+profile. C-API tests retain their supported default configuration; shared IO
+regressions run through both bridges. Absence of the recovery case in default
+builds is not evidence of recovery. Validate both
+configurations through `tools/test-runner.py`, plus applicable sanitizer,
+rendering and platform checks.
+
+In that recovery profile, codec and IO retain their existing algorithms and
+formats using private C++ core bridges. Codec, stream, picture, SVG-path and
+recording operations do not link the C API or export its entry points. Default
+builds retain the C bridges. Do not disable codec/IO to enable recovery; keep
+`SKITY_CODEC_MODULE=ON` and `SKITY_IO_MODULE=ON` for the complete profile.
+Module internals are private and do not become installed public headers.
+
+Recovery-mode Data factories consume transferred storage before allocating the
+object or shared control block. Their release callback runs exactly once even
+when construction throws. Recording Save operations commit their restore
+bookkeeping and operation bytes together; a refused Save appends no operation.
+
+For recovery unit tests, set `SKITY_BUILD_INSTALL=OFF`. Those test images link
+private replacement allocation operators and one shared thread-local fault
+counter so faults reach the actual core/codec code even with Darwin ASan.
+The unit-test/install combination is refused rather than packaging this test
+allocator. Product builds with `SKITY_TEST=OFF` never contain these sources,
+operators or support-library dependency. The ordinary default test profile
+keeps its allocator and installation behavior.
+
+The reusable [production consumer fixtures](../test/fixtures/recovery_cpp_consumer/README.md)
+separately exercise installed public headers/libraries and the existing internal
+IO archive. Run them through the unified runner against a relocated production
+prefix, keeping the public-SDK-only and private-IO scopes distinct.
+
+### Bounded software temporaries in C++ recovery mode
+
+The opt-in recovery profile stages integral axis-aligned rectangle raster spans
+with one bounded output allocation. Coordinates and clipping stay within the
+existing fixed-point safe bounds; delegate order and full-coverage spans stay
+unchanged. Fractional and other paths retain the original scan converter.
+Nearest-neighbor NEON batches use eight fixed scratch colors instead of a heap
+allocation for each row. Default-profile code and sampling/blending arithmetic
+remain unchanged.
+
+Permanent unified-runner cases in `canvas_save_allocation_test.cc` refuse every
+allocation beyond the rectangle output and all nearest-row scratch allocations.
+`sw_raster_test.cc` checks both fill rules/directions, scaling, translation,
+reflection, clipping, large coordinates and exact delegate order. These cases
+supplement, rather than relax, every original save-state/allocation assertion.
+
+Recovery-mode layer recording prepares restore-stack, paint-table and complete
+stream capacity before publication, preserving the existing wire operations.
+Allocator bookkeeping refusal releases unregistered raw blocks, optional block
+cache metadata failure falls back to direct release, and failed finalizer
+registration destroys an already constructed owner. Permanent allocation-fault
+cases verify these ownership transitions and a null-block refusal. Legacy
+configuration behavior stays unchanged; recovery mode remains an explicit C++
+choice with the documented C-API/unified refusal.
+
 GPU surfaces retire their canvas before releasing arena-backed stack storage.
 An abandoned, unflushed frame is safe to destroy with live nested layers.
 The ordinary Metal unit registry includes a deterministic surface-lifetime
-regression for this ownership order, including nested layer stacks.
+regression, in addition to the recovery profile's allocation-refusal cases.

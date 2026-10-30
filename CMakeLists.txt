@@ -38,6 +38,7 @@ set(CMAKE_CXX_EXTENSIONS OFF) # disable -std=gnu++11 by default
 # options should set before define skity library
 include(cmake/Options.cmake)
 
+
 if (${SKITY_UNIFIED_LIB})
   if (EMSCRIPTEN)
     # hiding the legacy C++ API relies on the shared library's dynamic export

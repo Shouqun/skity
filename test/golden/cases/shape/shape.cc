@@ -3,14 +3,20 @@
 // LICENSE file in the root directory of this source tree.
 
 #include <gtest/gtest.h>
+#if defined(SKITY_CPP_ALLOCATION_RECOVERY)
+#include "src/utils/parse_path.hpp"
+#else
 #include <skity/c/skity_parse_path.h>
+#endif
 
 #include <filesystem>
 #include <skity/recorder/picture_recorder.hpp>
 #include <skity/skity.hpp>
 
 #include "common/golden_test_check.hpp"
+#if !defined(SKITY_CPP_ALLOCATION_RECOVERY)
 #include "handle.hpp"
+#endif
 
 static const char* kGoldenTestImageDir = CASE_DIR;
 static const char* kGoldenTestCoverageAAImageDir =
@@ -595,6 +601,11 @@ namespace {
 // Parses an SVG path data string through the io module's C ABI; the handle
 // is released before returning, leaving only the path value behind.
 bool PathFromSVG(const char* data, skity::Path* out) {
+#if defined(SKITY_CPP_ALLOCATION_RECOVERY)
+  auto path = skity::ParsePath::FromSVGString(data);
+  if (path) *out = *path;
+  return path.has_value();
+#else
   skity_path handle = skity_parse_path_create_from_svg(data);
   if (handle == nullptr) {
     return false;
@@ -606,6 +617,7 @@ bool PathFromSVG(const char* data, skity::Path* out) {
   }
   skity_path_destroy(handle);
   return sp != nullptr;
+#endif
 }
 
 }  // namespace

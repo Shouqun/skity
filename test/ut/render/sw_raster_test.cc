@@ -129,3 +129,72 @@ TEST(SpanBuilder, HorizontalWritesAreClampedToTheCoverageRow) {
   EXPECT_FALSE(spans.empty());
   EXPECT_TRUE(SpansWithin(spans, 0, 0, 8, 1));
 }
+
+TEST(SWRaster, IntegralRectanglesPreserveExactSpansAndDelegateOrder) {
+  struct Case {
+    skity::Rect local;
+    skity::Matrix transform;
+    skity::Rect clip;
+    int x, y, width, height;
+  };
+  const auto clip = skity::Rect::MakeWH(16, 16);
+  const Case cases[] = {
+      {skity::Rect::MakeXYWH(1, 2, 6, 7), {}, clip, 1, 2, 6, 7},
+      {skity::Rect::MakeXYWH(1, 2, 6, 7), skity::Matrix::Translate(3, 4), clip,
+       4, 6, 6, 7},
+      {skity::Rect::MakeXYWH(2, 4, 8, 6), skity::Matrix::Scale(.5f, .5f), clip,
+       1, 2, 4, 3},
+      {skity::Rect::MakeXYWH(1, 2, 6, 7),
+       skity::Matrix::Translate(12, 0) * skity::Matrix::Scale(-1, 1), clip, 5,
+       2, 6, 7},
+      {skity::Rect::MakeXYWH(-3, -4, 10, 12),
+       {},
+       skity::Rect::MakeWH(5, 6),
+       0,
+       0,
+       5,
+       6},
+      {skity::Rect::MakeLTRB(-100000, -100000, 100000, 100000),
+       {},
+       clip,
+       0,
+       0,
+       16,
+       16},
+      {skity::Rect::MakeXYWH(30, 30, 2, 2), {}, clip, 0, 0, 0, 0},
+  };
+  struct Delegate : skity::SpanBuilderDelegate {
+    std::vector<skity::Span> spans;
+    void OnBuildSpan(int x, int y, int width, uint8_t alpha) override {
+      spans.push_back({x, y, width, alpha});
+    }
+  };
+  for (const auto& c : cases) {
+    for (auto direction :
+         {skity::Path::Direction::kCW, skity::Path::Direction::kCCW}) {
+      for (auto fill : {skity::Path::PathFillType::kWinding,
+                        skity::Path::PathFillType::kEvenOdd}) {
+        skity::Path path;
+        path.AddRect(c.local, direction);
+        path.SetFillType(fill);
+        skity::SWRaster raster;
+        Delegate delegate;
+        raster.RastePath(path, c.transform, c.clip, &delegate);
+        ASSERT_EQ(raster.CurrentSpans().size(), static_cast<size_t>(c.height));
+        ASSERT_EQ(delegate.spans.size(), raster.CurrentSpans().size());
+        for (int i = 0; i < c.height; ++i) {
+          const auto& span = raster.CurrentSpans()[i];
+          const auto& observed = delegate.spans[i];
+          EXPECT_EQ(span.x, c.x);
+          EXPECT_EQ(span.y, c.y + i);
+          EXPECT_EQ(span.len, c.width);
+          EXPECT_EQ(span.cover, 255);
+          EXPECT_EQ(observed.x, span.x);
+          EXPECT_EQ(observed.y, span.y);
+          EXPECT_EQ(observed.len, span.len);
+          EXPECT_EQ(observed.cover, span.cover);
+        }
+      }
+    }
+  }
+}

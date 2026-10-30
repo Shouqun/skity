@@ -25,13 +25,14 @@ target_include_directories(
   $<BUILD_INTERFACE:${CMAKE_CURRENT_BINARY_DIR}/include>
 )
 
-# C ABI surface (shipped with the module, exported from libskity-codec)
-target_sources(
-  skity-codec
-  PRIVATE
+# Recovery mode exposes only the existing C++ codec surface.
+if(NOT SKITY_CPP_ALLOCATION_RECOVERY)
+  target_sources(skity-codec PRIVATE
     ${CMAKE_CURRENT_LIST_DIR}/include/skity/c/skity_codec.h
-    ${CMAKE_CURRENT_LIST_DIR}/src/capi/codec_c.cpp
+    ${CMAKE_CURRENT_LIST_DIR}/src/capi/codec_c.cpp)
+endif()
 
+target_sources(skity-codec
   PRIVATE
   ${CMAKE_CURRENT_LIST_DIR}/include/skity/codec/codec.hpp
   ${CMAKE_CURRENT_LIST_DIR}/src/codec/codec.cc
@@ -78,18 +79,27 @@ endif()
 target_compile_definitions(skity-codec PRIVATE -DDISABLE_SKITY_EXPERIMENTAL_WARNINGS)
 
 target_link_libraries(skity-codec PUBLIC skity)
-# the module's own C ABI surface shares the capi handle protocol
-target_link_libraries(skity-codec PRIVATE skity-capi-internal)
-# the module internals reach the core only through the C ABI
-# (src/codec/core_bridge.hpp), so libskity-codec imports no core C++ symbol;
-# in the normal build those entry points live in the standalone skity-capi
-target_link_libraries(skity-codec PRIVATE skity::capi)
-# capi paths must also be listed here directly: INTERFACE-library usage
-# requirements do not survive cmake_to_gn, so "handle.hpp" and the shared
-# skity/c headers would be unresolvable in the GN build
-target_include_directories(skity-codec PRIVATE
-  ${SKITY_ROOT}/module/capi/common
-  ${SKITY_ROOT}/module/capi/include)
+if(SKITY_CPP_ALLOCATION_RECOVERY)
+  target_compile_definitions(skity-codec PRIVATE SKITY_CPP_ALLOCATION_RECOVERY=1)
+  if(MSVC)
+    target_compile_options(skity-codec PRIVATE /EHsc)
+  else()
+    target_compile_options(skity-codec PRIVATE -fexceptions -fno-rtti)
+  endif()
+else()
+  # the module's own C ABI surface shares the capi handle protocol
+  target_link_libraries(skity-codec PRIVATE skity-capi-internal)
+  # the module internals reach the core only through the C ABI
+  # (src/codec/core_bridge.hpp), so libskity-codec imports no core C++ symbol;
+  # in the normal build those entry points live in the standalone skity-capi
+  target_link_libraries(skity-codec PRIVATE skity::capi)
+  # capi paths must also be listed here directly: INTERFACE-library usage
+  # requirements do not survive cmake_to_gn, so "handle.hpp" and the shared
+  # skity/c headers would be unresolvable in the GN build
+  target_include_directories(skity-codec PRIVATE
+    ${SKITY_ROOT}/module/capi/common
+    ${SKITY_ROOT}/module/capi/include)
+endif()
 
 if (${SKITY_UNIFIED_LIB})
   # unified shape: the module exports its skity_codec_* C ABI only. The
@@ -263,12 +273,14 @@ if (${SKITY_BUILD_INSTALL})
     )
   endif()
 
+  if(NOT SKITY_CPP_ALLOCATION_RECOVERY)
   install(
     DIRECTORY
     "${CMAKE_CURRENT_LIST_DIR}/include/skity"
     DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
     FILES_MATCHING PATTERN "*.h"
   )
+  endif()
 
   # install library
   install(

@@ -6,6 +6,7 @@
 
 #include <cstring>
 #include <skity/codec/codec.hpp>
+#include <stdexcept>
 
 #include "src/io/core_bridge.hpp"
 #include "src/picture.hpp"
@@ -44,6 +45,10 @@ std::shared_ptr<Data> image_to_data(const Image* image,
     return {};
   }
 
+#if defined(SKITY_CPP_ALLOCATION_RECOVERY)
+  auto codec = Codec::MakePngCodec();
+  return codec ? codec->Encode(pixmap.get()) : nullptr;
+#else
   skity_pixmap pixmap_handle = skity::capi::alloc_handle<skity_pixmap_s>(
       SKITY_OBJECT_TYPE_PIXMAP, 0, pixmap);
   if (pixmap_handle == nullptr) {
@@ -58,6 +63,7 @@ std::shared_ptr<Data> image_to_data(const Image* image,
                                                        SKITY_OBJECT_TYPE_DATA);
   skity_data_destroy(encoded);
   return out;
+#endif
 }
 
 }  // namespace
@@ -149,6 +155,16 @@ void MemoryWriter32::WriteSampling(const SamplingOptions& sampling) {
     WriteUint32(static_cast<uint32_t>(sampling.mipmap));
   }
 }
+
+#if defined(SKITY_CPP_ALLOCATION_RECOVERY)
+void MemoryWriter32::PrepareWrite(size_t size) {
+  if (size > memory_data_.max_size() - memory_data_.size()) {
+    throw std::length_error("serialized operation capacity overflow");
+  }
+  const auto required = memory_data_.size() + size;
+  if (required > memory_data_.capacity()) GrowToAtLeast(required);
+}
+#endif
 
 uint32_t* MemoryWriter32::Reserve(size_t size) {
   size = Align4(size);

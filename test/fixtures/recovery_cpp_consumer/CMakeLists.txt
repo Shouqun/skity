@@ -1,0 +1,45 @@
+# Copyright 2021 The Lynx Authors. All rights reserved.
+# Licensed under the Apache License Version 2.0 that can be found in the
+# LICENSE file in the root directory of this source tree.
+
+cmake_minimum_required(VERSION 3.15)
+project(SkityRecoveryCppConsumer LANGUAGES CXX)
+set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
+find_package(skity CONFIG REQUIRED)
+
+set(GOOGLETEST_SOURCE_DIR "" CACHE PATH "Existing pinned GoogleTest source")
+if(NOT EXISTS "${GOOGLETEST_SOURCE_DIR}/CMakeLists.txt")
+  message(FATAL_ERROR "Set GOOGLETEST_SOURCE_DIR to the synced third_party/gtest")
+endif()
+set(INSTALL_GTEST OFF CACHE BOOL "" FORCE)
+add_subdirectory("${GOOGLETEST_SOURCE_DIR}" googletest)
+
+option(SKITY_CONSUMER_CPP_RECOVERY "Use the recovery private IO bridge" ON)
+option(SKITY_CONSUMER_PRIVATE_IO "Also qualify the noninstalled internal IO archive" OFF)
+if(SKITY_CONSUMER_PRIVATE_IO)
+  if(NOT EXISTS "${SKITY_PRIVATE_IO_SOURCE_DIR}/src/picture.hpp" OR
+     NOT EXISTS "${SKITY_PRIVATE_IO_LIBRARY}")
+    message(FATAL_ERROR "Private IO checks require the exact module source and product archive")
+  endif()
+  add_executable(skity_unit_test private_io_test.cc)
+  target_include_directories(skity_unit_test PRIVATE "${SKITY_PRIVATE_IO_SOURCE_DIR}")
+  target_link_libraries(skity_unit_test PRIVATE "${SKITY_PRIVATE_IO_LIBRARY}")
+  if(SKITY_CONSUMER_CPP_RECOVERY)
+    if(TARGET skity::capi)
+      message(FATAL_ERROR "Recovery IO consumer requires a product without C-API exports")
+    endif()
+    target_compile_definitions(skity_unit_test PRIVATE SKITY_CPP_ALLOCATION_RECOVERY=1)
+  else()
+    if(NOT TARGET skity::capi)
+      message(FATAL_ERROR "Default IO consumer requires the product's C-API target")
+    endif()
+    target_link_libraries(skity_unit_test PRIVATE skity::capi)
+  endif()
+else()
+  add_executable(skity_unit_test public_product_test.cc)
+endif()
+set_target_properties(skity_unit_test PROPERTIES
+  RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/test/ut")
+target_link_libraries(skity_unit_test PRIVATE skity::skity skity::codec gtest_main)

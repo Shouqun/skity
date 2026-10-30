@@ -4,6 +4,7 @@
 
 #include "src/render/sw/sw_span_brush.hpp"
 
+#include <array>
 #include <skity/effect/color_filter.hpp>
 #include <skity/graphic/bitmap.hpp>
 
@@ -688,7 +689,12 @@ void PixmapBrush::BrushH(int32_t x, int32_t y, int32_t length, int32_t alpha) {
   }
 
   const int32_t N = 8;
+#if defined(SKITY_CPP_ALLOCATION_RECOVERY)
+  // The SIMD batch has a fixed eight-pixel extent; rows need no heap scratch.
+  std::array<PMColor, N> colors{};
+#else
   std::vector<PMColor> colors(static_cast<size_t>(N));
+#endif
 
   uint32_t iterations = length / N;
   int32_t neon_filled = iterations * N;

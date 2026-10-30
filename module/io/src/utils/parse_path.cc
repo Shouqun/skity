@@ -11,7 +11,11 @@
 
 #include "src/utils/parse_path.hpp"
 
+#if defined(SKITY_CPP_ALLOCATION_RECOVERY)
+#include <skity/geometry/stroke.hpp>
+#else
 #include <skity/c/skity_stroke.h>
+#endif
 
 #include <cassert>
 #include <cstdio>
@@ -248,11 +252,16 @@ std::optional<Path> ParsePath::FromSVGString(const char data[]) {
               static_cast<Path::Direction>(!sweep), points[0].x, points[0].y);
           // The next relative command continues from the arc's end point;
           // re-read it through the C ABI (get_last_pt).
+#if defined(SKITY_CPP_ALLOCATION_RECOVERY)
+          Point last_pt{};
+          builder.Peek()->GetLastPt(&last_pt);
+#else
           skity_path handle = skity::capi::alloc_handle<skity_path_s>(
               SKITY_OBJECT_TYPE_PATH, 0, builder.Peek());
           skity_point last_pt{};
           skity_path_get_last_pt(handle, &last_pt);
           skity_path_destroy(handle);
+#endif
           c = {last_pt.x, last_pt.y};
         }
       } break;
@@ -307,6 +316,14 @@ std::string ParsePath::ToSVGString(const Path& path, PathEncoding encoding) {
   // control points after the shared start point, matching Path::Iter).
   auto paint = core_bridge::MakePaint();
 
+#if defined(SKITY_CPP_ALLOCATION_RECOVERY)
+  Path outline;
+  if (paint) Stroke(*paint).QuadPath(path, &outline, true);
+  const auto* points = outline.Points();
+  std::vector<Path::Verb> verbs;
+  if (outline.CountVerbs())
+    verbs.assign(outline.VerbsBegin(), outline.VerbsEnd());
+#else
   skity_path src = skity::capi::alloc_handle<skity_path_s>(
       SKITY_OBJECT_TYPE_PATH, 0,
       std::shared_ptr<Path>(const_cast<Path*>(&path), [](Path*) {}));
@@ -326,6 +343,7 @@ std::string ParsePath::ToSVGString(const Path& path, PathEncoding encoding) {
                         static_cast<int32_t>(points.size()));
   skity_path_destroy(dst);
 
+#endif
   Point pts[4];
   size_t pt = 0;
   for (size_t vi = 0; vi < verbs.size(); vi++) {

@@ -8,8 +8,27 @@
 #include <skity/geometry/matrix.hpp>
 #include <skity/graphic/paint.hpp>
 #include <vector>
+#if defined(SKITY_CPP_ALLOCATION_RECOVERY)
+#include <stdexcept>
+#endif
 
 namespace skity {
+
+#if defined(SKITY_CPP_ALLOCATION_RECOVERY)
+// Reserve without changing logical state. Keep ordinary vector growth and
+// reject an impossible append before a backend can publish a save.
+template <typename T>
+void ReserveRecoveryAppend(std::vector<T>& values) {
+  if (values.size() < values.capacity()) return;
+  if (values.size() == values.max_size())
+    throw std::length_error("Canvas state capacity exhausted");
+  const auto capacity = values.capacity();
+  const auto grown = capacity > values.max_size() / 2
+                         ? values.max_size()
+                         : (capacity ? capacity * 2 : 1);
+  values.reserve(grown);
+}
+#endif
 
 class LayerState {
  public:
@@ -27,6 +46,11 @@ class LayerState {
     Matrix local_matrix;
     Matrix total_matrix;
   };
+#if defined(SKITY_CPP_ALLOCATION_RECOVERY)
+  LayerState(const LayerState&) = default;
+  LayerState(LayerState&&) noexcept = default;
+  void PrepareSave() { ReserveRecoveryAppend(elements_); }
+#endif
   void Save();
   void Restore();
 
@@ -67,6 +91,22 @@ class CanvasState {
     }
     PushLayer();
   }
+#if defined(SKITY_CPP_ALLOCATION_RECOVERY)
+  LayerState PrepareLayerSave() {
+    const auto world = CurrentLayerState().GetTotalMatrix();
+    ReserveRecoveryAppend(layer_states_);
+    CurrentLayerState().PrepareSave();
+    return LayerState(world);
+  }
+  void CommitLayerSave(LayerState prepared) noexcept {
+    if (layer_fallback_) {
+      layer_fallback_ = false;
+      CurrentLayerState().Save();
+    } else {
+      layer_states_.emplace_back(std::move(prepared));
+    }
+  }
+#endif
   void MarkLayerFallback() { layer_fallback_ = true; }
   void Restore() {
     if (CurrentLayerState().CanRestore()) {

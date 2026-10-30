@@ -5,6 +5,7 @@
 #include "src/utils/arena_allocator.hpp"
 
 #include <cstdlib>
+#include <new>
 
 #include "src/logging.hpp"
 
@@ -39,8 +40,17 @@ Block BlockCacheAllocator::Alloc(size_t size) {
 
 void BlockCacheAllocator::Free(Block& block) {
   if (block.size == kDefaultBlockSize) {
+#if defined(SKITY_CPP_ALLOCATION_RECOVERY)
+    try {
+      blocks_.push_back(block);
+      return;
+    } catch (...) {
+      // Caching is optional: release directly if its metadata cannot grow.
+    }
+#else
     blocks_.push_back(block);
     return;
+#endif
   }
   internal_->Free(block);
 }
@@ -82,14 +92,34 @@ uint8_t* Arena::Allocate(size_t bytes, size_t align) {
     }
   }
 
+#if defined(SKITY_CPP_ALLOCATION_RECOVERY)
+  const auto remember = [this](Block block) {
+    if (!block.head) throw std::bad_alloc();
+    try {
+      blocks_.push_back(block);
+    } catch (...) {
+      allocator_->Free(block);
+      throw;
+    }
+  };
+#endif
+
   if (bytes >= block_size_) {
     Block block = allocator_->Alloc(bytes);
+#if defined(SKITY_CPP_ALLOCATION_RECOVERY)
+    remember(block);
+#else
     blocks_.push_back(block);
+#endif
     return block.head;
   }
 
   Block block = allocator_->Alloc(block_size_);
+#if defined(SKITY_CPP_ALLOCATION_RECOVERY)
+  remember(block);
+#else
   blocks_.push_back(block);
+#endif
   cursor_ = block.head;
   end_ = cursor_ + block_size_;
 

@@ -26,13 +26,20 @@ if(SKITY_VK_BACKEND AND NOT WGX_SPIRV_BACKEND)
 endif()
 
 option(SKITY_CAPI_MODULE "option for build C API wrapper module" ON)
+option(SKITY_CPP_ALLOCATION_RECOVERY
+       "Enable exception-safe C++ canvas allocation recovery" OFF)
+if(SKITY_CPP_ALLOCATION_RECOVERY AND (SKITY_CAPI_MODULE OR SKITY_UNIFIED_LIB))
+  message(FATAL_ERROR
+    "SKITY_CPP_ALLOCATION_RECOVERY is C++ only; disable C-API/unified exports")
+endif()
 
-# codec (and through it io) reach the core only via the C ABI, whose entry
-# points live in the capi module
+
+# Default modules reach the core through the C ABI. Recovery mode uses
+# private C++ bridges without enabling foreign-call exports.
 cmake_dependent_option(
   SKITY_CODEC_MODULE "option for build codec module"
   ON
-  [[SKITY_CAPI_MODULE]]
+  [[SKITY_CAPI_MODULE OR SKITY_CPP_ALLOCATION_RECOVERY]]
   OFF
 )
 cmake_dependent_option(

@@ -210,6 +210,7 @@ endif()
 if (${SKITY_CAPI_MODULE})
     target_sources(skity_unit_test PRIVATE
         capi/bridge_c_test.cc
+        capi/gaussian_mask_factory_test.cc
         capi/recorder_c_test.cc
         capi/text_delegate_c_test.cc
         capi/serialization_c_test.cc
@@ -233,11 +234,15 @@ if (${SKITY_CAPI_MODULE})
 endif()
 
 if (${SKITY_IO_MODULE})
-    target_sources(skity_unit_test PRIVATE io/mask_filter_serialization_test.cc)
+    target_sources(skity_unit_test PRIVATE io/mask_filter_serialization_test.cc io/core_bridge_test.cc)
+    target_include_directories(skity_unit_test PRIVATE ${SKITY_ROOT}/third_party/glm)
     target_include_directories(skity_unit_test PRIVATE
         ${CMAKE_SOURCE_DIR}/module/io
     )
     target_link_libraries(skity_unit_test PUBLIC skity::io)
+    if(NOT SKITY_CPP_ALLOCATION_RECOVERY)
+        target_link_libraries(skity_unit_test PRIVATE skity-capi-internal)
+    endif()
 endif()
 
 # no-rtti
@@ -375,4 +380,40 @@ if (${SKITY_VK_BACKEND})
 endif()
 
 
-gtest_add_tests(skity_unit_test "" AUTO)
+
+if(SKITY_CPP_ALLOCATION_RECOVERY)
+  # Real allocation refusal must reach shared-library code under sanitizers.
+  # Private replacement operators bind locally in each tested image; only the
+  # counter is shared. None of these support sources enter product builds.
+  if(SKITY_BUILD_INSTALL)
+    message(FATAL_ERROR "Recovery allocation tests are noninstalled; set SKITY_BUILD_INSTALL=OFF or disable unit tests")
+  endif()
+  add_library(skity-allocation-test-support SHARED base/allocation_failure.cc)
+  target_compile_definitions(skity-allocation-test-support PRIVATE SKITY_ALLOCATION_TEST_SUPPORT_IMPL=1)
+  set_target_properties(skity-allocation-test-support PROPERTIES CXX_STANDARD 17)
+  add_library(skity-allocation-test-operators OBJECT base/allocation_operators.cc)
+  set_target_properties(skity-allocation-test-operators PROPERTIES POSITION_INDEPENDENT_CODE ON CXX_STANDARD 17)
+  target_include_directories(skity_unit_test PRIVATE ${CMAKE_CURRENT_LIST_DIR})
+  foreach(recovery_image skity skity-codec skity_unit_test)
+    if(TARGET ${recovery_image})
+      target_sources(${recovery_image} PRIVATE $<TARGET_OBJECTS:skity-allocation-test-operators>)
+      target_link_libraries(${recovery_image} PRIVATE skity-allocation-test-support)
+    endif()
+  endforeach()
+  target_compile_definitions(skity_unit_test PRIVATE SKITY_CPP_ALLOCATION_RECOVERY=1)
+  target_sources(skity_unit_test PRIVATE render/canvas_save_allocation_test.cc)
+  if(CMAKE_SYSTEM_NAME STREQUAL "Darwin" AND SKITY_MTL_BACKEND)
+    target_sources(skity_unit_test PRIVATE render/hw/canvas_layer_allocation_test.mm)
+    set_source_files_properties(render/hw/canvas_layer_allocation_test.mm
+      PROPERTIES COMPILE_FLAGS "-fobjc-arc")
+    target_link_libraries(skity_unit_test PRIVATE "-framework Metal")
+  endif()
+  if(SKITY_IO_MODULE)
+    target_compile_definitions(skity_unit_test PRIVATE SKITY_RECOVERY_TEST_IO=1)
+  endif()
+endif()
+
+# The allocation operator object expression is not a source text file.
+get_target_property(_skity_unit_sources skity_unit_test SOURCES)
+list(FILTER _skity_unit_sources EXCLUDE REGEX "^[$]<")
+gtest_add_tests(TARGET skity_unit_test SOURCES ${_skity_unit_sources})

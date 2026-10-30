@@ -3,7 +3,11 @@
 // LICENSE file in the root directory of this source tree.
 
 #include <gtest/gtest.h>
+#if defined(SKITY_CPP_ALLOCATION_RECOVERY)
+#include "src/utils/parse_path.hpp"
+#else
 #include <skity/c/skity_parse_path.h>
+#endif
 
 #include <algorithm>
 #include <array>
@@ -15,7 +19,9 @@
 
 #include "common/golden_test_check.hpp"
 #include "common/golden_test_env.hpp"
+#if !defined(SKITY_CPP_ALLOCATION_RECOVERY)
 #include "handle.hpp"
+#endif
 
 static const char* kGoldenTestImageSimpleDir = CASE_DIR;
 static const char* kGoldenTestImageCPUTessDir = CASE_DIR "cpu_tess_images/";
@@ -557,16 +563,30 @@ TEST(SimpleShapeGolden, DrawYinAndYang) {
   recorder.BeginRecording(skity::Rect::MakeWH(400.f, 200.f));
   auto canvas = recorder.GetRecordingCanvas();
   // The SVG string roundtrip goes through the module's C ABI.
+#if defined(SKITY_CPP_ALLOCATION_RECOVERY)
+  const auto parsed = skity::ParsePath::FromSVGString(
+      "M50,2a48,48 0 1 1 0,96a24 24 0 1 1 0-48a24 24 0 1 0 0-48");
+  auto svg_path_sp = parsed ? std::make_shared<skity::Path>(*parsed) : nullptr;
+  ASSERT_NE(svg_path_sp, nullptr);
+#else
   skity_path svg_path = skity_parse_path_create_from_svg(
       "M50,2a48,48 0 1 1 0,96a24 24 0 1 1 0-48a24 24 0 1 0 0-48");
   ASSERT_NE(svg_path, nullptr);
   auto svg_path_sp = skity::capi::get_impl<skity_path_s, skity::Path>(
       svg_path, SKITY_OBJECT_TYPE_PATH);
 
+#endif
+
   skity::Path temp;
   temp.AddPath(*svg_path_sp);
   temp.AddCircle(50, 26, 6);
 
+#if defined(SKITY_CPP_ALLOCATION_RECOVERY)
+  auto str = skity::ParsePath::ToSVGString(temp);
+  ASSERT_GT(str.size() + 1, 1u);
+  const auto dst = skity::ParsePath::FromSVGString(str.c_str());
+  ASSERT_TRUE(dst.has_value());
+#else
   std::shared_ptr<skity::Path> temp_view(&temp, [](skity::Path*) {});
   skity_path temp_handle = skity::capi::alloc_handle<skity_path_s>(
       SKITY_OBJECT_TYPE_PATH, 0, std::move(temp_view));
@@ -582,6 +602,8 @@ TEST(SimpleShapeGolden, DrawYinAndYang) {
   auto dst = skity::capi::get_impl<skity_path_s, skity::Path>(
       dst_path, SKITY_OBJECT_TYPE_PATH);
   ASSERT_NE(dst, nullptr);
+
+#endif
 
   skity::Paint paint;
   paint.SetAntiAlias(true);
@@ -599,8 +621,10 @@ TEST(SimpleShapeGolden, DrawYinAndYang) {
   EXPECT_TRUE(skity::testing::CompareGoldenTexture(dl.get(), 400, 400,
                                                    context.ToPathList()));
 
+#if !defined(SKITY_CPP_ALLOCATION_RECOVERY)
   skity_path_destroy(svg_path);
   skity_path_destroy(dst_path);
+#endif
 }
 
 TEST(SimpleShapeGolden, DrawDRRect) {
