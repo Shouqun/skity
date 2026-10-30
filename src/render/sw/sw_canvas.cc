@@ -632,91 +632,105 @@ void SWCanvas::FillGlyphs(uint32_t count, const GlyphID* glyphs,
                           const float* position_x, const float* position_y,
                           const Font& font, const Paint& paint) {
   std::vector<const GlyphData*> glyphs_data(count);
-  font.LoadGlyphPath(glyphs, count, glyphs_data.data());
-  for (uint32_t k = 0; k < count; k++) {
-    auto& path = glyphs_data[k]->GetPath();
+  font.VisitGlyphPaths(
+      glyphs, count, glyphs_data.data(),
+      [&](const GlyphData* const[], uint32_t) {
+        for (uint32_t k = 0; k < count; k++) {
+          auto& path = glyphs_data[k]->GetPath();
 
-    auto transform = Matrix::Translate(position_x[k], position_y[k]);
+          auto transform = Matrix::Translate(position_x[k], position_y[k]);
 
-    if (font.GetTypeface()->ContainsColorTable()) {
-      float x = position_x[k] + glyphs_data[k]->GetHoriBearingX();
-      float y = position_y[k] - glyphs_data[k]->GetHoriBearingY();
+          if (font.GetTypeface()->ContainsColorTable()) {
+            float x = position_x[k] + glyphs_data[k]->GetHoriBearingX();
+            float y = position_y[k] - glyphs_data[k]->GetHoriBearingY();
 
-      float h = glyphs_data[k]->GetHeight();
-      float w = glyphs_data[k]->GetWidth();
+            float h = glyphs_data[k]->GetHeight();
+            float w = glyphs_data[k]->GetWidth();
 
-      const GlyphID id = glyphs_data[k]->Id();
-      const auto& transform = CurrentTransform();
-      const Matrix22 transform22{transform.GetScaleX(), transform.GetSkewX(),
-                                 transform.GetSkewY(), transform.GetScaleY()};
-      const auto desc =
-          ScalerContextDesc::MakeTransformed(font, Paint(), 1.f, transform22);
-      auto context = ScalerContextCache::GlobalScalerContextCache()
-                         ->FindOrCreateScalerContext(desc, font.GetTypeface());
-      auto glyph_image = context->PrepareOwnedImage(PackedGlyphID(id), Paint());
-      const auto& glyph_bitmap = glyph_image.Image();
-      if (!glyph_bitmap.buffer) {
-        continue;
-      }
+            const GlyphID id = glyphs_data[k]->Id();
+            const auto& transform = CurrentTransform();
+            const Matrix22 transform22{
+                transform.GetScaleX(), transform.GetSkewX(),
+                transform.GetSkewY(), transform.GetScaleY()};
+            const auto desc = ScalerContextDesc::MakeTransformed(
+                font, Paint(), 1.f, transform22);
+            auto context =
+                ScalerContextCache::GlobalScalerContextCache()
+                    ->FindOrCreateScalerContext(desc, font.GetTypeface());
+            auto glyph_image =
+                context->PrepareOwnedImage(PackedGlyphID(id), Paint());
+            const auto& glyph_bitmap = glyph_image.Image();
+            if (!glyph_bitmap.buffer) {
+              continue;
+            }
 
-      const size_t row_bytes = glyph_bitmap.RowBytes();
+            const size_t row_bytes = glyph_bitmap.RowBytes();
 
-      auto pixmap = std::make_shared<Pixmap>(
-          skity::Data::MakeWithCopy(
-              glyph_bitmap.buffer,
-              row_bytes * static_cast<size_t>(glyph_bitmap.height)),
-          row_bytes, glyph_bitmap.width, glyph_bitmap.height,
-          AlphaType::kOpaque_AlphaType, ToColorType(glyph_bitmap.format));
+            auto pixmap = std::make_shared<Pixmap>(
+                skity::Data::MakeWithCopy(
+                    glyph_bitmap.buffer,
+                    row_bytes * static_cast<size_t>(glyph_bitmap.height)),
+                row_bytes, glyph_bitmap.width, glyph_bitmap.height,
+                AlphaType::kOpaque_AlphaType, ToColorType(glyph_bitmap.format));
 
-      this->DrawImage(Image::MakeImage(pixmap),
-                      skity::Rect::MakeXYWH(x, y, w, h), SamplingOptions{},
-                      nullptr);
-    } else {
-      SWRaster raster;
-      Matrix current = CurrentTransform();
-      if ((current.GetTranslateX() != 0.0f ||
-           current.GetTranslateY() != 0.0f) &&
-          current.OnlyScaleAndTranslate() &&
-          current.GetTranslateX() == std::round(current.GetTranslateX()) &&
-          current.GetTranslateY() == std::round(current.GetTranslateY())) {
-        Matrix global = current;
-        const float dx = global.GetTranslateX();
-        const float dy = global.GetTranslateY();
-        global.SetTranslateX(0.0f);
-        global.SetTranslateY(0.0f);
-        Path transformed = path.CopyWithMatrix(global * transform);
-        transformed = transformed.CopyWithMatrix(Matrix::Translate(dx, dy));
-        raster.RastePath(transformed, Matrix{}, GetScanClipBounds());
-      } else {
-        raster.RastePath(path, current * transform, GetScanClipBounds());
-      }
+            this->DrawImage(Image::MakeImage(pixmap),
+                            skity::Rect::MakeXYWH(x, y, w, h),
+                            SamplingOptions{}, nullptr);
+          } else {
+            SWRaster raster;
+            Matrix current = CurrentTransform();
+            if ((current.GetTranslateX() != 0.0f ||
+                 current.GetTranslateY() != 0.0f) &&
+                current.OnlyScaleAndTranslate() &&
+                current.GetTranslateX() ==
+                    std::round(current.GetTranslateX()) &&
+                current.GetTranslateY() ==
+                    std::round(current.GetTranslateY())) {
+              Matrix global = current;
+              const float dx = global.GetTranslateX();
+              const float dy = global.GetTranslateY();
+              global.SetTranslateX(0.0f);
+              global.SetTranslateY(0.0f);
+              Path transformed = path.CopyWithMatrix(global * transform);
+              transformed =
+                  transformed.CopyWithMatrix(Matrix::Translate(dx, dy));
+              raster.RastePath(transformed, Matrix{}, GetScanClipBounds());
+            } else {
+              raster.RastePath(path, current * transform, GetScanClipBounds());
+            }
 
-      DoBrush(raster, paint, false);
-    }
-  }
+            DoBrush(raster, paint, false);
+          }
+        }
+        return true;
+      });
 }
 void SWCanvas::StrokeGlyphs(uint32_t count, const GlyphID* glyphs,
                             const float* position_x, const float* position_y,
                             const Font& font, const Paint& paint) {
   std::vector<const GlyphData*> glyphs_data(count);
-  font.LoadGlyphPath(glyphs, count, glyphs_data.data());
-  for (uint32_t k = 0; k < count; k++) {
-    auto& path = glyphs_data[k]->GetPath();
-    auto transform = Matrix::Translate(position_x[k], position_y[k]);
+  font.VisitGlyphPaths(
+      glyphs, count, glyphs_data.data(),
+      [&](const GlyphData* const[], uint32_t) {
+        for (uint32_t k = 0; k < count; k++) {
+          auto& path = glyphs_data[k]->GetPath();
+          auto transform = Matrix::Translate(position_x[k], position_y[k]);
 
-    Stroke stroke(paint);
-    Path quad;
-    Path outline;
-    stroke.QuadPath(path, &quad);
-    stroke.StrokePath(quad, &outline);
+          Stroke stroke(paint);
+          Path quad;
+          Path outline;
+          stroke.QuadPath(path, &quad);
+          stroke.StrokePath(quad, &outline);
 
-    SWRaster raster;
+          SWRaster raster;
 
-    raster.RastePath(outline, CurrentTransform() * transform,
-                     GetScanClipBounds());
+          raster.RastePath(outline, CurrentTransform() * transform,
+                           GetScanClipBounds());
 
-    DoBrush(raster, paint, true);
-  }
+          DoBrush(raster, paint, true);
+        }
+        return true;
+      });
 }
 
 void SWCanvas::OnDrawImageRect(std::shared_ptr<Image> image, const Rect& src,

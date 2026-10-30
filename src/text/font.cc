@@ -135,6 +135,41 @@ void Font::LoadGlyphPath(const GlyphID* glyphs, uint32_t count,
   scaler_context_container->PreparePaths(glyphs, count, glyph_data);
 }
 
+bool Font::VisitGlyphPaths(const GlyphID* glyphs, uint32_t count,
+                           const GlyphData* scratch[], GlyphPathVisitor visitor,
+                           const void* context) const {
+  if (count == 0) {
+    return true;
+  }
+  if (!scratch) {
+    return false;
+  }
+  std::fill_n(scratch, count, nullptr);
+  if (!glyphs || !visitor) {
+    return false;
+  }
+
+  // Snapshot settings and retain the actual face independently of callback
+  // reentry. Keep the container alive even if the callback purges its LRU
+  // entry.
+  Font source = *this;
+  auto typeface = source.GetTypefaceOrDefault();
+  if (!typeface) {
+    return false;
+  }
+  const auto desc = ScalerContextDesc::MakeCanonicalized(source, Paint());
+  auto container =
+      ScalerContextCache::GlobalScalerContextCache()->FindOrCreateScalerContext(
+          desc, typeface);
+  struct ClearScratch {
+    const GlyphData** data;
+    uint32_t size;
+    ~ClearScratch() { std::fill_n(data, size, nullptr); }
+  } clear{scratch, count};
+  container->PreparePaths(glyphs, count, scratch);
+  return visitor(scratch, count, context);
+}
+
 void Font::LoadGlyphBitmap(const GlyphID* glyphs, uint32_t count,
                            const GlyphData* glyph_data[], const Paint& paint,
                            float context_scale, const Matrix& transform) const {
