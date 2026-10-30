@@ -5,11 +5,10 @@
 #ifndef MODULE_IO_SRC_RECORD_RECORD_PLAYBACK_HPP
 #define MODULE_IO_SRC_RECORD_RECORD_PLAYBACK_HPP
 
-#include <skity/c/skity_canvas.h>
-
 #include <skity/io/data.hpp>
 #include <vector>
 
+#include "src/io/canvas_bridge.hpp"
 #include "src/io/memory_writer.hpp"
 #include "src/picture.hpp"
 #include "src/record/draw_type.hpp"
@@ -66,15 +65,15 @@ class RecordPlayback {
   // Delegate canvas receiving the recorded op stream. The handle stays owned
   // by this RecordPlayback and is destroyed with it; it is created lazily on
   // first call.
-  skity_canvas GetDelegateCanvas();
+  replay_bridge::CanvasRef GetDelegateCanvas();
 
   // Op entry points invoked by the delegate callback table. Types follow the
   // C callback surface (skity_clip_op carries the Canvas::ClipOp values).
   // Paints arrive as shared_ptr (borrowed from the delegate's wrapper) so the
   // recorder can retain them without cloning — Paint construction /
   // destruction stays on the C ABI side.
-  void OnClipRect(Rect const& rect, skity_clip_op op);
-  void OnClipPath(Path const& path, skity_clip_op op);
+  void OnClipRect(Rect const& rect, replay_bridge::ClipOp op);
+  void OnClipPath(Path const& path, replay_bridge::ClipOp op);
   void OnDrawRect(Rect const& rect, std::shared_ptr<Paint> paint);
   void OnDrawPath(Path const& path, std::shared_ptr<Paint> paint);
   void OnSaveLayer(const Rect& bounds, std::shared_ptr<Paint> paint);
@@ -145,7 +144,11 @@ class RecordPlayback {
   uint32_t height_ = 0;
   MemoryWriter32 writer32_;
 
+#if defined(SKITY_CPP_ALLOCATION_RECOVERY)
+  std::unique_ptr<Canvas> delegate_;
+#else
   skity_canvas delegate_ = nullptr;
+#endif
 
   std::vector<int32_t> restore_offset_stack_ = {};
 

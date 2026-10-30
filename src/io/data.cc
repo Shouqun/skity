@@ -116,12 +116,33 @@ std::shared_ptr<Data> Data::MakeFromFileName(const char path[]) {
 
 std::shared_ptr<Data> Data::MakeWithProc(const void* ptr, size_t length,
                                          ReleaseProc proc, void* ctx) {
+#if defined(SKITY_CPP_ALLOCATION_RECOVERY)
+  // Consume transferred storage on either object or shared-control failure.
+  // Once the object exists, its destructor becomes the sole release owner.
+  struct PendingRelease {
+    const void* ptr;
+    ReleaseProc proc;
+    void* context;
+    bool armed = true;
+    ~PendingRelease() {
+      if (armed && proc) proc(ptr, context);
+    }
+  } pending{ptr, proc, ctx};
+  auto owner = std::unique_ptr<Data>(new Data(ptr, length, proc, ctx));
+  pending.armed = false;
+  return std::shared_ptr<Data>(std::move(owner));
+#else
   return std::shared_ptr<Data>(new Data(ptr, length, proc, ctx));
+#endif
 }
 
 std::shared_ptr<Data> Data::MakeFromMalloc(const void* data, size_t length) {
+#if defined(SKITY_CPP_ALLOCATION_RECOVERY)
+  return MakeWithProc(data, length, skity_free_releaseproc, nullptr);
+#else
   return std::shared_ptr<Data>(
       new Data(data, length, skity_free_releaseproc, nullptr));
+#endif
 }
 
 DataAllocator* Data::g_allocator = nullptr;

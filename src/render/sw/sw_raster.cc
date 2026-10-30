@@ -10,6 +10,7 @@
 #include <cmath>
 #include <cstddef>
 #include <skity/geometry/stroke.hpp>
+#include <utility>
 
 #include "src/logging.hpp"
 #include "src/tracing.hpp"
@@ -763,6 +764,46 @@ void SWRaster::RastePath(Path const& path, Matrix const& transform,
                          const Rect& clip_bounds,
                          SpanBuilderDelegate* span_builder_delegate) {
   SKITY_TRACE_EVENT(SWRaster_RastePath);
+
+#if defined(SKITY_CPP_ALLOCATION_RECOVERY)
+  // An integral axis-aligned rectangle has one fully covered span per row.
+  // Stage its bounded output directly instead of allocating paths and edges.
+  // All fractional/other paths keep the original scan-conversion arithmetic.
+  Rect rectangle;
+  if (transform.OnlyScaleAndTranslate() && path.IsRect(&rectangle)) {
+    Rect device;
+    transform.MapRect(&device, rectangle);
+    const auto integral = [](float value) {
+      return std::isfinite(value) && value == std::floor(value);
+    };
+    const auto integral_edges = [&](const Rect& rect) {
+      return integral(rect.Left()) && integral(rect.Top()) &&
+             integral(rect.Right()) && integral(rect.Bottom());
+    };
+    if (device.Width() > 0 && device.Height() > 0 && integral_edges(device) &&
+        integral_edges(clip_bounds)) {
+      bounds_ = device;
+      if (!bounds_.Intersect(kFixedPointSafeBounds)) {
+        bounds_.SetEmpty();
+        return;
+      }
+      Rect scan = bounds_;
+      if (!scan.Intersect(clip_bounds)) return;
+      std::vector<Span> prepared;
+      prepared.reserve(static_cast<size_t>(scan.Height()));
+      const int32_t left = static_cast<int32_t>(scan.Left());
+      const int32_t width = static_cast<int32_t>(scan.Width());
+      for (int32_t y = static_cast<int32_t>(scan.Top()); y < scan.Bottom();
+           ++y) {
+        if (span_builder_delegate)
+          span_builder_delegate->OnBuildSpan(left, y, width, 255);
+        prepared.push_back({left, y, width, 255});
+      }
+      spans_ = std::move(prepared);
+      return;
+    }
+  }
+#endif
 
   Paint paint;
   Stroke stroke(paint);

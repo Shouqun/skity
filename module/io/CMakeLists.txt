@@ -60,20 +60,18 @@ target_include_directories(skity-io
 target_include_directories(skity-io
     PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
-    # capi paths must also be listed here directly: INTERFACE-library usage
-    # requirements do not survive cmake_to_gn, so "handle.hpp" and the shared
-    # skity/c headers would be unresolvable in the GN build
-    ${SKITY_ROOT}/module/capi/common
-    ${SKITY_ROOT}/module/capi/include
+
 )
 
-# C ABI surface (shipped with the module): streams + picture
-target_sources(skity-io PRIVATE
-    ${CMAKE_CURRENT_LIST_DIR}/include/skity/c/skity_stream.h
-    ${CMAKE_CURRENT_LIST_DIR}/include/skity/c/skity_picture.h
-    ${CMAKE_CURRENT_LIST_DIR}/include/skity/c/skity_parse_path.h
-    ${CMAKE_CURRENT_LIST_DIR}/src/capi/io_c.cpp
-)
+if(NOT SKITY_CPP_ALLOCATION_RECOVERY)
+  # C ABI surface (shipped with the module): streams + picture
+  target_sources(skity-io PRIVATE
+      ${CMAKE_CURRENT_LIST_DIR}/include/skity/c/skity_stream.h
+      ${CMAKE_CURRENT_LIST_DIR}/include/skity/c/skity_picture.h
+      ${CMAKE_CURRENT_LIST_DIR}/include/skity/c/skity_parse_path.h
+      ${CMAKE_CURRENT_LIST_DIR}/src/capi/io_c.cpp
+  )
+endif()
 
 target_link_libraries(skity-io
     PUBLIC
@@ -81,11 +79,17 @@ target_link_libraries(skity-io
     skity::codec
 )
 
-# the module's own C ABI surface shares the capi handle protocol
-target_link_libraries(skity-io PRIVATE skity-capi-internal)
-# The module internals call the core C ABI (see src/io/core_bridge.hpp);
-# those entry points live in the standalone skity-capi library.
-target_link_libraries(skity-io PRIVATE skity::capi)
+if(SKITY_CPP_ALLOCATION_RECOVERY)
+  target_compile_definitions(skity-io PRIVATE SKITY_CPP_ALLOCATION_RECOVERY=1)
+else()
+  # the module's own C ABI surface shares the capi handle protocol
+  target_link_libraries(skity-io PRIVATE skity-capi-internal)
+  # The module internals call the core C ABI (see src/io/core_bridge.hpp);
+  # those entry points live in the standalone skity-capi library.
+  target_link_libraries(skity-io PRIVATE skity::capi)
+  target_include_directories(skity-io PRIVATE
+    ${SKITY_ROOT}/module/capi/common ${SKITY_ROOT}/module/capi/include)
+endif()
 # core_bridge.hpp computes rotation matrices with the same glm the core
 # uses, keeping the serialized bytes bit-identical.
 target_include_directories(skity-io PRIVATE ${SKITY_ROOT}/third_party/glm)
@@ -96,6 +100,8 @@ set_property(TARGET skity-io PROPERTY CXX_STANDARD_REQUIRED ON)
 # no-exceptions
 if (MSVC)
     target_compile_options(skity-io PRIVATE /EHsc)
+elseif(SKITY_CPP_ALLOCATION_RECOVERY)
+    target_compile_options(skity-io PRIVATE -fexceptions -fno-rtti)
 else()
     target_compile_options(skity-io PRIVATE -fno-exceptions -fno-rtti)
 endif()

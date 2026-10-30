@@ -4,6 +4,9 @@
 
 #include <cstring>
 #include <memory>
+#if defined(SKITY_CPP_ALLOCATION_RECOVERY)
+#include <optional>
+#endif
 #include <skity/render/canvas.hpp>
 #include <skity/text/font.hpp>
 #include <skity/text/text_blob.hpp>
@@ -24,6 +27,29 @@ Canvas::Canvas(Rect cull_rect) {
 Canvas::~Canvas() = default;
 
 int Canvas::Save() {
+#if defined(SKITY_CPP_ALLOCATION_RECOVERY)
+  // Each backend save commits only after its own allocation succeeds. Keep
+  // the common stacks transactional if any later preparation refuses.
+  const int previous = save_count_;
+  bool clip_saved = false;
+  bool matrix_saved = false;
+  try {
+    if (tracing_canvas_state_) {
+      global_clip_bounds_stack_.push_back(global_clip_bounds_stack_.back());
+      clip_saved = true;
+      canvas_state_->Save();
+      matrix_saved = true;
+    }
+    ++save_count_;
+    this->InternalSave();
+  } catch (...) {
+    save_count_ = previous;
+    if (matrix_saved) canvas_state_->Restore();
+    if (clip_saved) global_clip_bounds_stack_.pop_back();
+    throw;
+  }
+  return previous;
+#else
   save_count_ += 1;
 
   if (tracing_canvas_state_) {
@@ -33,6 +59,7 @@ int Canvas::Save() {
 
   this->InternalSave();
   return this->GetSaveCount() - 1;
+#endif
 }
 
 void Canvas::Restore() {
@@ -253,6 +280,40 @@ void Canvas::DrawColor(Color4f color, BlendMode mode) {
 void Canvas::DrawPaint(const Paint &paint) { this->OnDrawPaint(paint); }
 
 int Canvas::SaveLayer(const Rect &bounds, const Paint &paint) {
+#if defined(SKITY_CPP_ALLOCATION_RECOVERY)
+  const Rect saved_bounds = bounds;
+  const Paint saved_paint = paint;
+  if (saved_bounds.IsEmpty() || QuickReject(saved_bounds)) {
+    const int previous = Save();
+    try {
+      ClipRect(Rect::MakeEmpty());
+    } catch (...) {
+      Restore();
+      throw;
+    }
+    return previous;
+  }
+  const int previous = save_count_;
+  std::optional<LayerState> prepared;
+  bool clip_saved = false;
+  try {
+    if (tracing_canvas_state_) {
+      prepared.emplace(canvas_state_->PrepareLayerSave());
+      global_clip_bounds_stack_.push_back(global_clip_bounds_stack_.back());
+      clip_saved = true;
+      CalculateGlobalClipBounds(saved_bounds, ClipOp::kIntersect);
+    }
+    ++save_count_;
+    OnSaveLayer(saved_bounds, saved_paint);
+  } catch (...) {
+    save_count_ = previous;
+    if (clip_saved) global_clip_bounds_stack_.pop_back();
+    throw;
+  }
+  if (prepared) canvas_state_->CommitLayerSave(std::move(*prepared));
+  return previous;
+#else
+
   if (bounds.IsEmpty() || QuickReject(bounds)) {
     LOGW(
         "Bounds of saving layer is empty or outside global clip bounds, no "
@@ -275,6 +336,7 @@ int Canvas::SaveLayer(const Rect &bounds, const Paint &paint) {
     canvas_state_->SaveLayer(bounds, paint);
   }
   return save_count_ - 1;
+#endif
 }
 
 void Canvas::Flush() { this->OnFlush(); }

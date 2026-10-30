@@ -39,6 +39,11 @@ class MemoryWriter32 final {
 
   size_t BytesWritten() const { return memory_data_.size(); }
 
+#if defined(SKITY_CPP_ALLOCATION_RECOVERY)
+  // Reserve capacity for a complete operation without publishing any bytes.
+  void PrepareWrite(size_t size);
+#endif
+
   // size should be multiple of 4
   uint32_t* Reserve(size_t size);
   uint32_t* ReservePad(size_t size);

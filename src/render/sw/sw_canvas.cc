@@ -20,6 +20,9 @@
 #include "src/effect/mask_filter_priv.hpp"
 #include "src/effect/pixmap_shader.hpp"
 #include "src/render/paint_order.hpp"
+#if defined(SKITY_CPP_ALLOCATION_RECOVERY)
+#include "src/render/canvas_state.hpp"
+#endif
 #include "src/render/sw/sw_raster.hpp"
 #include "src/render/sw/sw_span_brush.hpp"
 #include "src/render/sw/sw_stack_blur.hpp"
@@ -462,6 +465,38 @@ void SWCanvas::OnDrawPaint(const Paint& paint) {
 }
 
 void SWCanvas::OnSaveLayer(const Rect& bounds, const Paint& paint) {
+#if defined(SKITY_CPP_ALLOCATION_RECOVERY)
+  State saved_state(state_stack_.back());
+  saved_state.has_layer = true;
+  auto* previous_layer = PeekLayerStack();
+  auto* target = previous_layer
+                     ? static_cast<SWCanvas*>(previous_layer->canvas.get())
+                     : this;
+  Paint work_paint(paint);
+  work_paint.SetStyle(Paint::kFill_Style);
+  auto layer_bounds = work_paint.ComputeFastBounds(bounds);
+  const auto matrix = target->CurrentTransform();
+  Rect device_bounds = Rect::MakeWH(target->Width(), target->Height());
+  if (!device_bounds.Intersect(target->GetScanClipBounds()))
+    device_bounds.SetEmpty();
+  Matrix inverse;
+  if (matrix.Invert(&inverse)) {
+    Rect local_clip;
+    inverse.MapRect(&local_clip, device_bounds);
+    if (!layer_bounds.Intersect(local_clip)) layer_bounds.SetEmpty();
+  }
+  Rect device_layer;
+  matrix.MapRect(&device_layer, layer_bounds);
+  auto layer = std::make_unique<LayerState>(device_layer, layer_bounds);
+  layer->Init(this, target->global_offset_);
+  layer->paint = paint;
+  ReserveRecoveryAppend(state_stack_);
+  ReserveRecoveryAppend(layer_stack_);
+  if (previous_layer) previous_layer->canvas->OnSave();
+  state_stack_.emplace_back(std::move(saved_state));
+  layer_stack_.emplace_back(std::move(layer));
+#else
+
   SKITY_TRACE_EVENT(SWCanvas_OnSaveLayer);
 
   state_stack_.emplace_back(state_stack_.back());
@@ -504,6 +539,7 @@ void SWCanvas::OnSaveLayer(const Rect& bounds, const Paint& paint) {
       GenerateLayer(rel_bounds, layer_bounds, target_canvas->global_offset_);
 
   layer->paint = paint;
+#endif
 }
 
 void SWCanvas::OnDrawBlob(const TextBlob* blob, float x, float y,
@@ -745,9 +781,18 @@ void SWCanvas::OnRestore() {
     }
   }
 
+#if defined(SKITY_CPP_ALLOCATION_RECOVERY)
+  try {
+    if (state_stack_.back().has_layer) OnLayerRestore();
+  } catch (...) {
+    state_stack_.pop_back();
+    throw;
+  }
+#else
   if (state_stack_.back().has_layer) {
     OnLayerRestore();
   }
+#endif
 
   state_stack_.pop_back();
 }
@@ -947,10 +992,23 @@ void SWCanvas::OnLayerRestore() {
     PeekLayerStack()->canvas->OnRestore();
   }
 
+#if defined(SKITY_CPP_ALLOCATION_RECOVERY)
+  const bool previous_drawing = IsDrawingLayer();
+  try {
+    SetDrawingLayer(layer->paint.GetMaskFilter() == nullptr);
+    this->DrawImage(Image::MakeImage(layer->bitmap->GetPixmap()),
+                    layer->log_bounds, &layer->paint);
+  } catch (...) {
+    SetDrawingLayer(previous_drawing);
+    throw;
+  }
+  SetDrawingLayer(previous_drawing);
+#else
   SetDrawingLayer(layer->paint.GetMaskFilter() == nullptr);
   this->DrawImage(Image::MakeImage(layer->bitmap->GetPixmap()),
                   layer->log_bounds, &layer->paint);
   SetDrawingLayer(false);
+#endif
 }
 
 std::unique_ptr<SWCanvas> SWCanvas::CreateSubCanvas(Bitmap* bitmap,

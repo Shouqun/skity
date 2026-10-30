@@ -46,84 +46,52 @@ template <>
 void FlatIntoMemory(const TextBlob& blob, WriteBuffer& buffer) {
   buffer.WriteRect(core_bridge::GetTextBlobBounds(&blob));
 
-  core_bridge::WithTextBlobHandle(&blob, [&](skity_text_blob handle) {
-    int32_t run_count =
-        handle != nullptr ? skity_text_blob_get_run_count(handle) : 0;
+  const auto runs = core_bridge::ReadTextBlobRuns(&blob);
+  for (const auto& run : runs) {
+    const auto& glyphs = run.glyphs;
+    const auto& pos_x = run.pos_x;
+    const auto& pos_y = run.pos_y;
+    const int32_t glyph_count = glyphs.size();
+    if (glyph_count <= 0) continue;
+    buffer.WriteInt32(glyph_count);
 
-    for (int32_t run_index = 0; run_index < run_count; run_index++) {
-      int32_t glyph_count =
-          skity_text_blob_get_run_glyph_count(handle, run_index);
+    int32_t run_position = 0;
+    if (!pos_x.empty()) {
+      run_position = 1;
 
-      if (glyph_count <= 0) {
-        continue;
-      }
-
-      std::vector<uint16_t> glyphs(glyph_count);
-      skity_text_blob_get_run_glyphs(handle, run_index, glyphs.data(),
-                                     glyph_count);
-
-      int32_t pos_x_count =
-          skity_text_blob_get_run_pos_x(handle, run_index, nullptr, 0);
-      int32_t pos_y_count =
-          skity_text_blob_get_run_pos_y(handle, run_index, nullptr, 0);
-      std::vector<float> pos_x(pos_x_count > 0 ? pos_x_count : 0);
-      std::vector<float> pos_y(pos_y_count > 0 ? pos_y_count : 0);
-      if (!pos_x.empty()) {
-        skity_text_blob_get_run_pos_x(handle, run_index, pos_x.data(),
-                                      static_cast<int32_t>(pos_x.size()));
-      }
       if (!pos_y.empty()) {
-        skity_text_blob_get_run_pos_y(handle, run_index, pos_y.data(),
-                                      static_cast<int32_t>(pos_y.size()));
+        run_position = 2;
       }
-
-      buffer.WriteInt32(glyph_count);
-
-      int32_t run_position = 0;
-      if (!pos_x.empty()) {
-        run_position = 1;
-
-        if (!pos_y.empty()) {
-          run_position = 2;
-        }
-      }
-
-      std::vector<float> pos_data{};
-
-      if (run_position > 0) {
-        const float* pos_x_ptr = pos_x.data();
-        const float* pos_y_ptr = run_position == 2 ? pos_y.data() : nullptr;
-
-        for (size_t i = 0; i < glyphs.size(); i++) {
-          pos_data.push_back(pos_x_ptr[i]);
-          if (run_position == 2) {
-            pos_data.push_back(pos_y_ptr[i]);
-          }
-        }
-      }
-
-      buffer.WriteInt32(run_position);
-      // no extended data
-
-      buffer.WritePoint({0.f, 0.f});  // run offset, always (0, 0)
-
-      skity_font font_handle = skity_text_blob_get_run_font(handle, run_index);
-      std::shared_ptr<Font> font = skity::capi::get_impl<skity_font_s, Font>(
-          font_handle, SKITY_OBJECT_TYPE_FONT);
-      skity_font_destroy(font_handle);
-
-      FlatIntoMemory(*font, buffer);  // write font info first
-
-      // write glyph info
-      buffer.WriteByteArray(reinterpret_cast<const uint8_t*>(glyphs.data()),
-                            sizeof(GlyphID) * glyphs.size());
-      // write pos data
-      buffer.WriteByteArray(reinterpret_cast<const uint8_t*>(pos_data.data()),
-                            sizeof(float) * pos_data.size());
     }
 
-    return 0;
-  });
+    std::vector<float> pos_data{};
+
+    if (run_position > 0) {
+      const float* pos_x_ptr = pos_x.data();
+      const float* pos_y_ptr = run_position == 2 ? pos_y.data() : nullptr;
+
+      for (size_t i = 0; i < glyphs.size(); i++) {
+        pos_data.push_back(pos_x_ptr[i]);
+        if (run_position == 2) {
+          pos_data.push_back(pos_y_ptr[i]);
+        }
+      }
+    }
+
+    buffer.WriteInt32(run_position);
+    // no extended data
+
+    buffer.WritePoint({0.f, 0.f});  // run offset, always (0, 0)
+
+    FlatIntoMemory(*run.font, buffer);
+
+    // write glyph info
+    buffer.WriteByteArray(reinterpret_cast<const uint8_t*>(glyphs.data()),
+                          sizeof(GlyphID) * glyphs.size());
+    // write pos data
+    buffer.WriteByteArray(reinterpret_cast<const uint8_t*>(pos_data.data()),
+                          sizeof(float) * pos_data.size());
+  }
 
   // Mark end of text blob
   buffer.WriteInt32(0);

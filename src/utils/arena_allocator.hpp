@@ -119,8 +119,20 @@ class ArenaAllocator {
     } else {
       uint8_t* p = arena_.Allocate(sizeof(T), alignof(T));
       T* o = new (p) T{std::forward<Args>(args)...};
+#if defined(SKITY_CPP_ALLOCATION_RECOVERY)
+      Finalizer* finalizer = nullptr;
+      try {
+        finalizer = reinterpret_cast<Finalizer*>(
+            arena_.Allocate(sizeof(Finalizer), alignof(Finalizer)));
+      } catch (...) {
+        // Construction succeeded; failed registration must retire its owner.
+        o->~T();
+        throw;
+      }
+#else
       Finalizer* finalizer = reinterpret_cast<Finalizer*>(
           arena_.Allocate(sizeof(Finalizer), alignof(Finalizer)));
+#endif
       finalizer->func = Destruct<T>;
       finalizer->ptr = o;
       finalizer->next = finalizer_head_;

@@ -17,18 +17,18 @@ elseif(WIN32)
   # specify dll outpu directory
   set(SKITY_DLL_DIR ${CMAKE_CURRENT_BINARY_DIR})
   set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${SKITY_DLL_DIR})
-  target_compile_options(
-    skity
-    PUBLIC
-    PRIVATE
-    /EHs-c- # disable exceptions
-  )
+  if(SKITY_CPP_ALLOCATION_RECOVERY)
+    target_compile_options(skity PRIVATE /EHsc)
+  else()
+    target_compile_options(skity PRIVATE /EHs-c-)
+  endif()
 
 else()
-  target_compile_options(
-    skity
-    PUBLIC
-    PRIVATE -fno-exceptions -fno-rtti)
+  if(SKITY_CPP_ALLOCATION_RECOVERY)
+    target_compile_options(skity PRIVATE -fexceptions -fno-rtti)
+  else()
+    target_compile_options(skity PRIVATE -fno-exceptions -fno-rtti)
+  endif()
 
     # the unit tests reach into non-exported internals, so a test build keeps
     # default visibility — except in the unified shape, whose export table is
@@ -116,5 +116,12 @@ elseif(CMAKE_SYSTEM_NAME STREQUAL "Linux")
     include(cmake/Libcxx.cmake)
 
     target_link_libraries(skity PRIVATE $<TARGET_OBJECTS:third_party__libcxx> $<TARGET_OBJECTS:third_party__libcxxabi>)
+  endif()
+endif()
+
+if(SKITY_CPP_ALLOCATION_RECOVERY)
+  target_compile_definitions(skity PRIVATE SKITY_CPP_ALLOCATION_RECOVERY=1)
+  if(EMSCRIPTEN)
+    target_compile_options(skity PRIVATE -fexceptions)
   endif()
 endif()

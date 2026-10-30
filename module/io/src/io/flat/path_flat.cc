@@ -2,7 +2,9 @@
 // Licensed under the Apache License Version 2.0 that can be found in the
 // LICENSE file in the root directory of this source tree.
 
+#if !defined(SKITY_CPP_ALLOCATION_RECOVERY)
 #include <skity/c/skity_path.h>
+#endif
 
 #include <array>
 #include <skity/graphic/path.hpp>
@@ -48,6 +50,12 @@ PathData QueryPathData(const Path& path) {
   // Flat bulk read of the path storage (verbs + points + conic weights) and
   // a replay projecting each verb to the control points it contributes —
   // the same point sequence Path::Iter yields, minus each segment's start.
+#if defined(SKITY_CPP_ALLOCATION_RECOVERY)
+  const auto* verbs = path.VerbsBegin();
+  const auto* points = path.Points();
+  const auto* weights = path.ConicWeights();
+  {
+#else
   std::shared_ptr<Path> view(const_cast<Path*>(&path), [](Path*) {});
   skity_path handle = skity::capi::alloc_handle<skity_path_s>(
       SKITY_OBJECT_TYPE_PATH, 0, std::move(view));
@@ -66,44 +74,46 @@ PathData QueryPathData(const Path& path) {
                                  static_cast<int32_t>(weights.size()));
     skity_path_destroy(handle);
 
+#endif
     size_t pt = 0;
     size_t w = 0;
-    for (skity_path_verb verb : verbs) {
+    for (size_t vi = 0; vi < path.CountVerbs(); ++vi) {
+      const auto verb = static_cast<Path::Verb>(verbs[vi]);
       switch (verb) {
         // The point storage is incremental: every verb stores only the
         // points it introduces (move/line 1, quad/conic 2, cubic 3), so the
         // projected control points sit at [pt..] directly.
-        case SKITY_PATH_VERB_MOVE:
+        case Path::Verb::kMove:
           data.verbs.push_back(static_cast<uint8_t>(verb));
           data.points.push_back({points[pt].x, points[pt].y});
           pt += 1;
           break;
-        case SKITY_PATH_VERB_LINE:
+        case Path::Verb::kLine:
           data.verbs.push_back(static_cast<uint8_t>(verb));
           data.points.push_back({points[pt].x, points[pt].y});
           pt += 1;
           break;
-        case SKITY_PATH_VERB_QUAD:
+        case Path::Verb::kQuad:
           data.verbs.push_back(static_cast<uint8_t>(verb));
           data.points.push_back({points[pt].x, points[pt].y});
           data.points.push_back({points[pt + 1].x, points[pt + 1].y});
           pt += 2;
           break;
-        case SKITY_PATH_VERB_CUBIC:
+        case Path::Verb::kCubic:
           data.verbs.push_back(static_cast<uint8_t>(verb));
           data.points.push_back({points[pt].x, points[pt].y});
           data.points.push_back({points[pt + 1].x, points[pt + 1].y});
           data.points.push_back({points[pt + 2].x, points[pt + 2].y});
           pt += 3;
           break;
-        case SKITY_PATH_VERB_CONIC:
+        case Path::Verb::kConic:
           data.verbs.push_back(static_cast<uint8_t>(verb));
           data.points.push_back({points[pt].x, points[pt].y});
           data.points.push_back({points[pt + 1].x, points[pt + 1].y});
           data.weights.push_back(weights[w++]);
           pt += 2;
           break;
-        case SKITY_PATH_VERB_CLOSE:
+        case Path::Verb::kClose:
           data.verbs.push_back(static_cast<uint8_t>(verb));
           break;
         default:

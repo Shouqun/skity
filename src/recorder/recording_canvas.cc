@@ -99,6 +99,21 @@ void RecordingCanvas::OnDrawPath(Path const& path, Paint const& paint) {
 }
 
 void RecordingCanvas::OnSaveLayer(const Rect& bounds, const Paint& paint) {
+#if defined(SKITY_CPP_ALLOCATION_RECOVERY)
+  // Prepare the matching restore slot before publishing the layer operation.
+  auto& stack = dp_builder_->save_op_stack_;
+  stack.push_back(-1);
+  try {
+    Push<SaveLayerOp>(bounds, paint);
+  } catch (...) {
+    stack.pop_back();
+    throw;
+  }
+  stack.back() = dp_builder_->last_op_offset_;
+  dp_builder_->properties_ |=
+      static_cast<uint32_t>(DisplayList::Property::kSaveLayer);
+  UpdateProperties(paint);
+#else
   Push<SaveLayerOp>(bounds, paint);
   if (dp_builder_) {
     dp_builder_->save_op_stack_.push_back(dp_builder_->last_op_offset_);
@@ -106,6 +121,7 @@ void RecordingCanvas::OnSaveLayer(const Rect& bounds, const Paint& paint) {
         static_cast<uint32_t>(DisplayList::Property::kSaveLayer);
     UpdateProperties(paint);
   }
+#endif
 }
 
 void RecordingCanvas::OnDrawBlob(const TextBlob* blob, float x, float y,
@@ -149,11 +165,25 @@ void RecordingCanvas::OnDrawPaint(Paint const& paint) {
   AccumulateOpBounds(GetGlobalClipBounds(), nullptr);
 }
 void RecordingCanvas::OnSave() {
+#if defined(SKITY_CPP_ALLOCATION_RECOVERY)
+  // Reserve the matching restore slot before publishing the Save operation.
+  auto& stack = dp_builder_->save_op_stack_;
+  stack.push_back(-1);
+  try {
+    Push<SaveOp>();
+  } catch (...) {
+    stack.pop_back();
+    throw;
+  }
+  stack.back() = dp_builder_->last_op_offset_;
+#else
   Push<SaveOp>();
   if (dp_builder_) {
     dp_builder_->save_op_stack_.push_back(dp_builder_->last_op_offset_);
   }
+#endif
 }
+
 void RecordingCanvas::OnRestore() {
   Push<RestoreOp>();
   if (dp_builder_ == nullptr || dp_builder_->save_op_stack_.empty()) {

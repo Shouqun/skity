@@ -76,14 +76,9 @@ uint32_t unpack_v68(const std::shared_ptr<Paint>& paint, uint32_t packed) {
     uint32_t mode = packed & 0xFF;
 
     if (mode != CUSTOM_BLEND_MODE_SENTINEL) {
-      skity_paint handle = skity::capi::alloc_handle<skity_paint_s>(
-          SKITY_OBJECT_TYPE_PAINT, SKITY_HANDLE_OWNING, paint);
-      if (handle != nullptr) {
-        skity_paint_set_blend_mode(
-            handle, static_cast<skity_blend_mode>(std::min(
-                        mode, static_cast<uint32_t>(BlendMode::kLastMode))));
-        skity_paint_destroy(handle);
-      }
+      core_bridge::SetPaintBlendMode(
+          paint, static_cast<BlendMode>(std::min(
+                     mode, static_cast<uint32_t>(BlendMode::kLastMode))));
     }
   }
 
@@ -109,7 +104,8 @@ void FlatIntoMemory<Paint>(const Paint& paint, WriteBuffer& writer) {
 
   if (paint.GetPathEffect() || paint.GetShader() || paint.GetMaskFilter() ||
       paint.GetColorFilter() || paint.GetImageFilter() ||
-      core_bridge::GetPaintBlendMode(&paint) != SKITY_BLEND_MODE_SRC_OVER) {
+      static_cast<uint32_t>(core_bridge::GetPaintBlendMode(&paint)) !=
+          static_cast<uint32_t>(BlendMode::kSrcOver)) {
     flat_flags |= kHasEffects_FlatFlag;
   }
 

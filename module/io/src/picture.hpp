@@ -10,8 +10,6 @@
 #ifndef MODULE_IO_SRC_PICTURE_HPP
 #define MODULE_IO_SRC_PICTURE_HPP
 
-#include <skity/c/skity_canvas.h>
-
 #include <functional>
 #include <skity/geometry/rect.hpp>
 #include <skity/graphic/image.hpp>
@@ -20,6 +18,7 @@
 #include <skity/text/typeface.hpp>
 #include <string>
 
+#include "src/io/canvas_bridge.hpp"
 #include "src/stream/stream.hpp"
 
 namespace skity {
@@ -90,7 +89,7 @@ class SKITY_API Picture final {
                                                  int32_t recursion_limit);
 
   void HandleOp(ReadBuffer& buffer, uint32_t type, size_t size,
-                skity_canvas canvas, const Matrix& matrix);
+                replay_bridge::CanvasRef canvas, const Matrix& matrix);
 
  private:
   std::unique_ptr<RecordPlayback> playback_;

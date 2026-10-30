@@ -31,6 +31,8 @@ enum class LayerRTOrigin {
 };
 
 class HWLayer : public HWDraw {
+  friend class HWAllocationTestPeer;
+
  public:
   /**
    *
