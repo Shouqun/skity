@@ -477,6 +477,17 @@ class TestRunner:
                             
                         report["failures"].append(failure_record)
 
+        # A report can be flushed before teardown or sanitizer failure. Keep
+        # completed case results, but never let their JSON mask process failure.
+        if exit_code != 0 and not report["failures"]:
+            failure = self._create_infra_error(
+                "runtime_nonzero_exit",
+                f"Test process exited with code {exit_code} after writing its JSON report.")
+            failure["failures"][0]["actual_exit_code"] = exit_code
+            report["summary"]["total"] += 1
+            report["summary"]["failed"] += 1
+            report["failures"].extend(failure["failures"])
+
         return report
 
     def _create_infra_error(self, reason_code: str, error_msg: str, exit_code: int = EXIT_INFRA_ERROR) -> Dict[str, Any]:
@@ -502,6 +513,39 @@ class TestRunner:
                 }
             ]
         }
+
+    def run_runner_contract_suite(self) -> Dict[str, Any]:
+        import importlib.util
+        import io
+        from pathlib import Path
+        import unittest
+
+        test_path = Path(self.repo_root) / "tools/tests/test_runner_test.py"
+        spec = importlib.util.spec_from_file_location("test_runner_contracts", test_path)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        suite = unittest.defaultTestLoader.loadTestsFromModule(module)
+        log = io.StringIO()
+        result = unittest.TextTestRunner(stream=log, verbosity=2).run(suite)
+        path = Path(self.build_dir) / "runner_contract.log"
+        path.write_text(log.getvalue())
+        failures = []
+        for case, error in [*result.failures, *result.errors]:
+            failures.append({"suite": self.suite, "case_name": case.id(),
+                             "status": "FAIL", "exit_code": EXIT_TEST_FAILED,
+                             "stage": "Runner contract", "reason_code": "assert_failed",
+                             "backend": "none", "oracle": "contract", "error": error,
+                             "artifacts": {"log": str(path)}})
+        if not result.testsRun or result.skipped:
+            failures.append({"suite": self.suite, "case_name": "Completeness",
+                             "status": "FAIL", "exit_code": EXIT_TEST_FAILED,
+                             "stage": "Runner contract", "reason_code": "missing_cases",
+                             "backend": "none", "oracle": "contract",
+                             "error": "Runner contract cases must execute without skips",
+                             "artifacts": {"log": str(path)}})
+        return {"summary": {"total": result.testsRun,
+                            "passed": result.testsRun - len(result.failures) - len(result.errors),
+                            "failed": len(failures)}, "failures": failures}
 
     def print_agent_report(self, report: Dict[str, Any]):
         if self.prepared_coretext_profile:
@@ -531,7 +575,7 @@ class TestRunner:
 
         self.clean_build_directory()
 
-        source_only = self.suite == "coretext-profile-contract"
+        source_only = self.suite in ("coretext-profile-contract", "runner-contract")
         if not self.skip_configure and not source_only:
             ok, err = self.configure_cmake()
             if not ok:
@@ -549,6 +593,8 @@ class TestRunner:
         # Dispatch by suite
         if self.suite in ("unit", "golden-shape", "golden-text"):
             report = self.run_gtest_suite()
+        elif self.suite == "runner-contract":
+            report = self.run_runner_contract_suite()
         elif self.suite == "font-harness":
             from font_harness_runner import run_suite
             report = run_suite(self, self.args)
@@ -582,7 +628,7 @@ class TestRunner:
 
 def main():
     parser = argparse.ArgumentParser(description='Skity Test Runner with AI Agent feedback loop')
-    parser.add_argument('--suite', default='unit', choices=['unit', 'golden-shape', 'golden-text', 'font-harness', 'coretext-profile-contract', 'coretext-native-inspect', 'coretext-profile-negative'], help='Test suite to run')
+    parser.add_argument('--suite', default='unit', choices=['runner-contract', 'unit', 'golden-shape', 'golden-text', 'font-harness', 'coretext-profile-contract', 'coretext-native-inspect', 'coretext-profile-negative'], help='Test suite to run')
     parser.add_argument('--coretext-profile', default='legacy', help='Explicit reviewed native CoreText reference profile; legacy by default')
     parser.add_argument('--build-dir', default='build', help='Build directory (default: build)')
     parser.add_argument('--backend', default='metal', choices=['metal', 'gl', 'vulkan'], help='Golden test backend to run (default: metal)')

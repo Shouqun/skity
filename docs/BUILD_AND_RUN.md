@@ -244,3 +244,19 @@ GPU surfaces retire their canvas before releasing arena-backed stack storage.
 An abandoned, unflushed frame is safe to destroy with live nested layers.
 The ordinary Metal unit registry includes a deterministic surface-lifetime
 regression, in addition to the recovery profile's allocation-refusal cases.
+
+
+## Unified runner process contracts
+
+Run the permanent report/process-outcome regressions without a native build:
+
+```sh
+python3 tools/test-runner.py --suite=runner-contract --run-only
+```
+
+A nonzero or signal process status still fails after a successful JSON report
+has been written. Completed case results remain available, and the additional
+infrastructure record retains the actual process status. Ordinary assertion
+failures and missing-report outcomes keep their existing behavior. The suite
+includes real completed child processes and needs only the Python standard
+library; it does not configure CMake or require a graphics context.
