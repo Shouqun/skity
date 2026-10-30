@@ -718,59 +718,66 @@ GlyphRunList GlyphRun::MakeInternal(
           arena_allocator);
     } else {
       std::vector<const GlyphData*> glyph_data(count);
-      font.LoadGlyphPath(glyphs, count, glyph_data.data());
+      font.VisitGlyphPaths(
+          glyphs, count, glyph_data.data(),
+          [&](const GlyphData* const[], uint32_t) {
+            std::vector<GlyphID> mask_glyphs;
+            std::vector<float> mask_position_x;
+            std::vector<float> mask_position_y;
+            mask_glyphs.reserve(count);
+            mask_position_x.reserve(count);
+            mask_position_y.reserve(count);
 
-      std::vector<GlyphID> mask_glyphs;
-      std::vector<float> mask_position_x;
-      std::vector<float> mask_position_y;
-      mask_glyphs.reserve(count);
-      mask_position_x.reserve(count);
-      mask_position_y.reserve(count);
+            auto append_mask_runs = [&](const Paint& working_paint) {
+              GlyphRunList mask_runs = transformed_mask::MakeGlyphRunList(
+                  static_cast<uint32_t>(mask_glyphs.size()), mask_glyphs.data(),
+                  origin, mask_position_x.data(), mask_position_y.data(), font,
+                  working_paint, format, context_scale, transform, false,
+                  atlas_manager, arena_allocator);
+              for (auto* mask_run : mask_runs) {
+                run_list.push_back(mask_run);
+              }
+            };
 
-      auto append_mask_runs = [&](const Paint& working_paint) {
-        GlyphRunList mask_runs = transformed_mask::MakeGlyphRunList(
-            static_cast<uint32_t>(mask_glyphs.size()), mask_glyphs.data(),
-            origin, mask_position_x.data(), mask_position_y.data(), font,
-            working_paint, format, context_scale, transform, false,
-            atlas_manager, arena_allocator);
-        for (auto* mask_run : mask_runs) {
-          run_list.push_back(mask_run);
-        }
-      };
+            auto flush_mask_runs = [&]() {
+              if (mask_glyphs.empty()) {
+                return;
+              }
+              // Bitmap-only glyphs have no outline to stroke. Match the bitmap
+              // text fallback by drawing a single fill mask for every paint
+              // style.
+              Paint working_paint =
+                  transformed_mask::MakeBitmapOnlyFillPaint(paint);
+              append_mask_runs(working_paint);
+              mask_glyphs.clear();
+              mask_position_x.clear();
+              mask_position_y.clear();
+            };
 
-      auto flush_mask_runs = [&]() {
-        if (mask_glyphs.empty()) {
-          return;
-        }
-        // Bitmap-only glyphs have no outline to stroke. Match the bitmap text
-        // fallback by drawing a single fill mask for every paint style.
-        Paint working_paint = transformed_mask::MakeBitmapOnlyFillPaint(paint);
-        append_mask_runs(working_paint);
-        mask_glyphs.clear();
-        mask_position_x.clear();
-        mask_position_y.clear();
-      };
-
-      for (uint32_t index = 0; index < count; ++index) {
-        if (glyph_data[index] != nullptr &&
-            !glyph_data[index]->GetPath().IsEmpty()) {
-          // Preserve paint order when outline and bitmap-only glyphs overlap.
-          flush_mask_runs();
-          Path path = glyph_data[index]->GetPath().CopyWithMatrix(
-              Matrix::Translate(origin.x, origin.y));
-          run_list.push_back(arena_allocator->Make<PathGlyphRun>(
-              path, position_x[index], position_y[index], paint,
-              draw_path_func));
-        } else {
-          // Bitmap-only glyphs (for example bitmap emoji in an A8 font) have
-          // no outline to feed the path renderer. Keep them in local text
-          // coordinates and let the transformed-mask path rasterize them.
-          mask_glyphs.push_back(glyphs[index]);
-          mask_position_x.push_back(position_x[index]);
-          mask_position_y.push_back(position_y[index]);
-        }
-      }
-      flush_mask_runs();
+            for (uint32_t index = 0; index < count; ++index) {
+              if (glyph_data[index] != nullptr &&
+                  !glyph_data[index]->GetPath().IsEmpty()) {
+                // Preserve paint order when outline and bitmap-only glyphs
+                // overlap.
+                flush_mask_runs();
+                Path path = glyph_data[index]->GetPath().CopyWithMatrix(
+                    Matrix::Translate(origin.x, origin.y));
+                run_list.push_back(arena_allocator->Make<PathGlyphRun>(
+                    path, position_x[index], position_y[index], paint,
+                    draw_path_func));
+              } else {
+                // Bitmap-only glyphs (for example bitmap emoji in an A8 font)
+                // have no outline to feed the path renderer. Keep them in local
+                // text coordinates and let the transformed-mask path rasterize
+                // them.
+                mask_glyphs.push_back(glyphs[index]);
+                mask_position_x.push_back(position_x[index]);
+                mask_position_y.push_back(position_y[index]);
+              }
+            }
+            flush_mask_runs();
+            return true;
+          });
     }
   } else if (control.CanUseSDF(maximun_text_scale, paint,  // NOLINT
                                font.GetTypeface())) {
@@ -781,17 +788,21 @@ GlyphRunList GlyphRun::MakeInternal(
   } else {  // NOLINT
     // path
     std::vector<const GlyphData*> glyph_data(count);
-    font.LoadGlyphPath(glyphs, count, glyph_data.data());
-    for (uint32_t k = 0; k < count; k++) {
-      Path path = glyph_data[k]->GetPath();
-      if (path.IsEmpty()) {
-        // maybe is empty white space
-        continue;
-      }
-      path = path.CopyWithMatrix(Matrix::Translate(origin.x, origin.y));
-      run_list.push_back(arena_allocator->Make<PathGlyphRun>(
-          path, position_x[k], position_y[k], paint, draw_path_func));
-    }
+    font.VisitGlyphPaths(
+        glyphs, count, glyph_data.data(),
+        [&](const GlyphData* const[], uint32_t) {
+          for (uint32_t k = 0; k < count; k++) {
+            Path path = glyph_data[k]->GetPath();
+            if (path.IsEmpty()) {
+              // maybe is empty white space
+              continue;
+            }
+            path = path.CopyWithMatrix(Matrix::Translate(origin.x, origin.y));
+            run_list.push_back(arena_allocator->Make<PathGlyphRun>(
+                path, position_x[k], position_y[k], paint, draw_path_func));
+          }
+          return true;
+        });
   }
 
   return run_list;

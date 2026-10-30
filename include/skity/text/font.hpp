@@ -10,6 +10,7 @@
 #include <skity/macros.hpp>
 #include <skity/text/font_metrics.hpp>
 #include <skity/text/typeface.hpp>
+#include <type_traits>
 
 namespace skity {
 
@@ -114,8 +115,46 @@ class SKITY_API Font {
   void LoadGlyphMetrics(const GlyphID glyphs[], uint32_t count,
                         const GlyphData* glyph_data[],
                         const Paint& paint = Paint()) const;
+  // Cache-backed borrowed views; use VisitGlyphPaths to retain source owners
+  // while consuming paths across cache eviction or purge.
   void LoadGlyphPath(const GlyphID* glyphs, uint32_t count,
                      const GlyphData* glyph_data[]) const;
+
+  // Visits canonical glyph paths while retaining their scaler and typeface.
+  // scratch must have count entries. Its pointers are borrowed only during the
+  // synchronous visitor and are cleared before return, including unwinding.
+  // No callback runs for count == 0. Otherwise null arguments are refused.
+  // The callback runs outside cache/container locks and may purge the cache.
+  // Serialize mutation/preparation of the borrowed glyphs until it returns;
+  // retaining a Font or a const pointer alone does not synchronize glyph data.
+  using GlyphPathVisitor = bool (*)(const GlyphData* const glyph_data[],
+                                    uint32_t count, const void* context);
+  bool VisitGlyphPaths(const GlyphID* glyphs, uint32_t count,
+                       const GlyphData* scratch[], GlyphPathVisitor visitor,
+                       const void* context) const;
+
+  template <typename Visitor>
+  bool VisitGlyphPaths(const GlyphID* glyphs, uint32_t count,
+                       const GlyphData* scratch[],
+                       const Visitor& visitor) const {
+    if constexpr (std::is_pointer_v<Visitor>) {
+      if (!visitor) {
+        return VisitGlyphPaths(glyphs, count, scratch, nullptr, nullptr);
+      }
+    }
+    // The address of a function reference is not an object pointer. Wrap the
+    // callable reference on the stack so both function and object visitors use
+    // a valid erased context without allocating or extending its lifetime.
+    struct Context {
+      const Visitor& callback;
+    } context{visitor};
+    return VisitGlyphPaths(
+        glyphs, count, scratch,
+        [](const GlyphData* const data[], uint32_t size, const void* context) {
+          return static_cast<const Context*>(context)->callback(data, size);
+        },
+        &context);
+  }
   // Loads one glyph into a thread-local snapshot. The returned glyph and pixels
   // remain valid until the next LoadGlyphBitmap call on the same thread. They
   // must not be freed by the caller (Image().need_free is false).
