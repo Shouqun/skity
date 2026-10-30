@@ -34,6 +34,59 @@ constexpr uint8_t kIgnoredChannelDiff = 2;
 constexpr uint8_t kIgnoredSoftEdgeChannelDiff = 8;
 constexpr const char* kVariantGoldenDirSuffix = "_images";
 
+bool HasNativeCoreTextProfile() {
+  return std::getenv("SKITY_TEST_CORETEXT_PROFILE") != nullptr ||
+         std::getenv("SKITY_TEST_CORETEXT_REFERENCE_DIR") != nullptr;
+}
+
+std::string ResolveNativeCoreTextPath(const char* path, bool* selected) {
+  *selected = false;
+  if (!HasNativeCoreTextProfile()) return {};
+  const char* profile = std::getenv("SKITY_TEST_CORETEXT_PROFILE");
+  const char* directory = std::getenv("SKITY_TEST_CORETEXT_REFERENCE_DIR");
+  auto* env = skity::testing::GoldenTestEnv::GetInstance();
+  if (!profile || !directory ||
+      std::string(profile) != "macos-26.6.2-pf21-helvetica17" ||
+      !std::filesystem::path(directory).is_absolute() || !env ||
+      env->GetBackend() != skity::testing::Backend::kMetal) {
+    ADD_FAILURE() << "Invalid explicit native CoreText profile";
+    *selected = true;
+    return {};
+  }
+  const auto* test = ::testing::UnitTest::GetInstance()->current_test_info();
+  if (!test || std::string(test->test_suite_name()) != "TextGolden") return {};
+  std::string filename;
+  if (std::string(test->name()) == "Basic") filename = "text_basic.png";
+  if (std::string(test->name()) == "TextLinearGradientFlags")
+    filename = "text_linear_gradient_flags.png";
+  if (filename.empty()) return {};
+  *selected = true;
+  const std::filesystem::path original(path);
+  if (original.filename() != filename ||
+      original.parent_path().filename() != "ct") {
+    ADD_FAILURE() << "Native profile does not cover this command recipe";
+    return {};
+  }
+  const auto reference = std::filesystem::path(directory) / filename;
+  ::testing::Test::RecordProperty("coretext_profile", profile);
+  ::testing::Test::RecordProperty("coretext_profile_reference",
+                                  reference.string());
+#ifdef SKITY_CORETEXT_RECIPE_SOURCE_SHA256
+  ::testing::Test::RecordProperty("coretext_profile_recipe_sha256",
+                                  SKITY_CORETEXT_RECIPE_SOURCE_SHA256);
+  ::testing::Test::RecordProperty("coretext_profile_checker_sha256",
+                                  SKITY_CORETEXT_CHECKER_SOURCE_SHA256);
+#else
+  ADD_FAILURE() << "Native profile requires source-bound CoreText test build";
+  return {};
+#endif
+  if (!std::filesystem::is_regular_file(reference)) {
+    ADD_FAILURE() << "Missing explicit native reference: " << reference;
+    return {};
+  }
+  return reference.string();
+}
+
 bool HasSuffix(const std::string& text, const char* suffix) {
   std::string suffix_text(suffix);
   return text.size() >= suffix_text.size() &&
@@ -115,6 +168,10 @@ std::string ResolveGoldenReadPath(const char* path,
   if (path == nullptr) {
     return {};
   }
+
+  bool native_selected = false;
+  auto native_path = ResolveNativeCoreTextPath(path, &native_selected);
+  if (native_selected) return native_path;
 
   auto suffix = GetBackendGoldenSuffix();
   if (!suffix.empty() && use_backend_specific_golden) {
@@ -450,7 +507,7 @@ static bool CompareGoldenTextureImpl(
   auto target = ReadImage(expected_image_read_path.c_str());
 
   if (target == nullptr) {
-    if (!expected_image_write_path.empty() &&
+    if (!HasNativeCoreTextProfile() && !expected_image_write_path.empty() &&
         ShouldAutoGenerateMissingGolden()) {
       EXPECT_TRUE(
           env->SaveGoldenImage(source, expected_image_write_path.c_str()))
