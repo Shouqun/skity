@@ -37,6 +37,8 @@ class TestRunner:
         self.args = args
         self.suite = args.suite
         self.backend = args.backend
+        self.coretext_profile = args.coretext_profile
+        self.prepared_coretext_profile = None
         self.started = time.time()
         
         os.makedirs(self.build_dir, exist_ok=True)
@@ -94,6 +96,10 @@ class TestRunner:
 
     def prepare_test_environment(self) -> Tuple[Optional[Dict[str, str]], Optional[str]]:
         env = os.environ.copy()
+        # A profile is an explicit runner argument, never inherited ambient state.
+        from coretext_profile import PROFILE_ENV, DIRECTORY_ENV
+        for key in (PROFILE_ENV, DIRECTORY_ENV):
+            env.pop(key, None)
         env["AGENT_OUT_DIR"] = os.path.abspath(self.golden_failures_dir)
 
         vk_test_loader = os.environ.get("SKITY_VK_TEST_USE_SYSTEM_LOADER", "")
@@ -263,7 +269,7 @@ class TestRunner:
                     executables.append(vulkan_executable)
         return executables
 
-    def run_gtest_suite(self) -> Dict[str, Any]:
+    def run_gtest_suite(self, reference_transform=None) -> Dict[str, Any]:
         test_executables = self.find_test_executables()
         if not test_executables:
             return self._create_infra_error("missing_executable", "Test executable not found!")
@@ -274,7 +280,20 @@ class TestRunner:
         if env_error:
             return self._create_infra_error("missing_runtime_dependency", env_error)
 
+        from coretext_profile import prepare_profile, ProfileError
+        try:
+            self.prepared_coretext_profile = prepare_profile(
+                self.repo_root, self.build_dir, self.coretext_profile, self.backend)
+            if self.prepared_coretext_profile:
+                self.prepared_coretext_profile.bind_test_images(test_executables)
+                env.update(self.prepared_coretext_profile.environment())
+                if reference_transform:
+                    reference_transform(self.prepared_coretext_profile)
+        except (ProfileError, OSError, ValueError, subprocess.SubprocessError) as error:
+            return self._create_infra_error("coretext_profile_refused", str(error))
+
         reports = []
+        raw_reports = []
         for index, test_executable in enumerate(test_executables):
             gtest_json_path = os.path.join(self.build_dir, f"gtest_report_{index}.json")
             if os.path.exists(gtest_json_path):
@@ -311,14 +330,13 @@ class TestRunner:
                 # Parse the JSON if it exists
                 if os.path.exists(gtest_json_path):
                     reports.append(self._parse_gtest_json(gtest_json_path, result.returncode, result.stdout))
+                    with open(gtest_json_path, encoding="utf-8") as source:
+                        raw_reports.append(json.load(source))
                 else:
                     return self._create_infra_error("missing_gtest_report", "Tests ran but gtest_report.json was not generated.")
 
             except Exception as e:
                 return self._create_infra_error("infra_error", f"Failed to execute tests: {e}")
-
-        if len(reports) == 1:
-            return reports[0]
 
         merged_report = {
             "summary": {
@@ -331,6 +349,15 @@ class TestRunner:
         }
         for report in reports:
             merged_report["failures"].extend(report["failures"])
+        if self.prepared_coretext_profile:
+            try:
+                self.prepared_coretext_profile.verify(raw_reports)
+            except (ProfileError, OSError) as error:
+                # Preserve original pixel/runtime failures alongside refusal.
+                refusal = self._create_infra_error("coretext_profile_unverified", str(error))
+                merged_report["failures"].extend(refusal["failures"])
+                merged_report["summary"]["failed"] += 1
+            merged_report["coretext_profile"] = self.prepared_coretext_profile.report()
         return merged_report
 
     def _parse_gtest_json(self, json_path: str, exit_code: int, stdout: str) -> Dict[str, Any]:
@@ -477,6 +504,8 @@ class TestRunner:
         }
 
     def print_agent_report(self, report: Dict[str, Any]):
+        if self.prepared_coretext_profile:
+            report.setdefault("coretext_profile", self.prepared_coretext_profile.report())
         # Write to file
         try:
             with open(self.report_file, 'w', encoding='utf-8') as f:
@@ -502,14 +531,15 @@ class TestRunner:
 
         self.clean_build_directory()
 
-        if not self.skip_configure:
+        source_only = self.suite == "coretext-profile-contract"
+        if not self.skip_configure and not source_only:
             ok, err = self.configure_cmake()
             if not ok:
                 report = self._create_infra_error("configure_failed", err)
                 self.print_agent_report(report)
                 return EXIT_INFRA_ERROR
 
-        if not self.skip_build:
+        if not self.skip_build and not source_only:
             ok, err = self.build_project()
             if not ok:
                 report = self._create_infra_error("build_failed", err)
@@ -522,6 +552,15 @@ class TestRunner:
         elif self.suite == "font-harness":
             from font_harness_runner import run_suite
             report = run_suite(self, self.args)
+        elif self.suite == "coretext-profile-contract":
+            from coretext_profile import run_contract_suite
+            report = run_contract_suite(self)
+        elif self.suite == "coretext-native-inspect":
+            from coretext_profile import run_inspection_suite
+            report = run_inspection_suite(self)
+        elif self.suite == "coretext-profile-negative":
+            from coretext_profile import run_negative_suite
+            report = run_negative_suite(self)
         else:
             report = self._create_infra_error("usage_error", f"Suite '{self.suite}' is not implemented yet.", EXIT_USAGE_ERROR)
             self.print_agent_report(report)
@@ -543,7 +582,8 @@ class TestRunner:
 
 def main():
     parser = argparse.ArgumentParser(description='Skity Test Runner with AI Agent feedback loop')
-    parser.add_argument('--suite', default='unit', choices=['unit', 'golden-shape', 'golden-text', 'font-harness'], help='Test suite to run')
+    parser.add_argument('--suite', default='unit', choices=['unit', 'golden-shape', 'golden-text', 'font-harness', 'coretext-profile-contract', 'coretext-native-inspect', 'coretext-profile-negative'], help='Test suite to run')
+    parser.add_argument('--coretext-profile', default='legacy', help='Explicit reviewed native CoreText reference profile; legacy by default')
     parser.add_argument('--build-dir', default='build', help='Build directory (default: build)')
     parser.add_argument('--backend', default='metal', choices=['metal', 'gl', 'vulkan'], help='Golden test backend to run (default: metal)')
     parser.add_argument('--filter', default='', help='Run only tests matching pattern (e.g. for gtest)')
@@ -561,6 +601,8 @@ def main():
     if args.parallel <= 0:
         print("Error: --parallel must be > 0", file=sys.stderr)
         return EXIT_USAGE_ERROR
+    if args.coretext_profile != 'legacy' and (args.suite not in ('golden-text', 'coretext-profile-negative') or args.backend != 'metal'):
+        parser.error('--coretext-profile requires --suite=golden-text --backend=metal')
 
     runner = TestRunner(args)
     return runner.run()

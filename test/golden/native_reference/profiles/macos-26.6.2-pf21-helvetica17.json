@@ -1,0 +1,64 @@
+{
+  "schema_version": 1,
+  "id": "macos-26.6.2-pf21-helvetica17",
+  "backend": "metal",
+  "cases": {
+    "TextGolden.Basic": "text_basic.png",
+    "TextGolden.TextLinearGradientFlags": "text_linear_gradient_flags.png"
+  },
+  "platform": {
+    "system": "Darwin",
+    "machine": "arm64",
+    "product_version": "26.6.2",
+    "build_version": "25G83",
+    "coretext_bundle_version": "877.6.0.2"
+  },
+  "native_recipe": {
+    "width": 400,
+    "height": 400,
+    "format": "A8",
+    "text_size": 64,
+    "optical_size": 12,
+    "tracking": 0,
+    "phase_steps": 4,
+    "cjk_glyphs": [
+      1446,
+      2437
+    ],
+    "cjk_advances": [
+      64,
+      64
+    ],
+    "native_y0_at_row0": false
+  },
+  "fonts": {
+    "latin": {
+      "postscript": "Helvetica",
+      "version": "17.0d1e1",
+      "head_hex": "00010000000000006178cd6a5f0f3cf500110800000000005f4d8f0000000000dee02ed6f865fc270b9108f900000009000100010000",
+      "file_identity": {
+        "bytes": 2369592,
+        "sha256": "25eceb458d4baf628ee0b6a135a9f8ac5ec7b2826646720834bd2bf00dfc825a"
+      }
+    },
+    "cjk": {
+      "postscript": "PingFangSC-Regular",
+      "version": "21.0d1e1",
+      "head_hex": "00010000000500006196a53a5f0f3cf5000303e800000000e4893c0f00000000e49c929cffb8ff2c046603b800000004000200010000",
+      "file_identity": {
+        "bytes": 78222888,
+        "sha256": "9ff3ce9439fe285cdabb46f9ceb46b1ac58f1ca07e6f4a764e8286db621a0af9"
+      }
+    }
+  },
+  "sources": {
+    "test/golden/CMakeLists.txt": "a9f00815ac24b8dde680bd017f88e5fdbac5e084da6d0d54924c463dce461e2a",
+    "test/golden/cases/text/text.cc": "cb805ef90c449f0102aadf3855830ea1ed54886b742b3f994eae1f0e8ecca897",
+    "test/golden/common/golden_test_check.cc": "048cd0059b152f3286131207328cd91ee197566ad04eede3f4806dc4039a47c5",
+    "test/golden/common/golden_test_check.hpp": "99220f08795519e7e779e962413a95942cce7dbf732d6ff52d23f99f081e84d8",
+    "test/golden/native_reference/coretext_reference.cc": "84cc3dad0ce1fb3b64f3d0e683fec0a6807e8adacc7a66604414e5293c37b9c3",
+    "tools/coretext_profile.py": "d1d6877a4b7f65aa0172d9107b5183ec96f8dd6e4e48494fa2c23bbd64af7071",
+    "tools/test-runner.py": "32245667a3afd64a13f48f8f3c29d81d95c31cd05f197246cfc592cef7f97ae7",
+    "tools/tests/coretext_profile_test.py": "e98ba0a43e20b84502bb0b35f567dbe057f87b0c6b9415325dbf35ecb17edcc1"
+  }
+}

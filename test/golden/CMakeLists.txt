@@ -236,3 +236,30 @@ endif()
 endfunction()
 
 add_subdirectory(cases)
+
+# This reference producer deliberately links no Skity target. It can only
+# produce native coverage for the explicit, fingerprinted CoreText test profile.
+if(SKITY_CT_FONT)
+  foreach(_input IN ITEMS cases/text/text.cc common/golden_test_check.cc)
+    file(SHA256 "${CMAKE_CURRENT_LIST_DIR}/${_input}" _input_sha256)
+    set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${CMAKE_CURRENT_LIST_DIR}/${_input}")
+    if(_input STREQUAL "cases/text/text.cc")
+      target_compile_definitions(skity_golden_test PRIVATE
+        SKITY_CORETEXT_RECIPE_SOURCE_SHA256="${_input_sha256}")
+    else()
+      target_compile_definitions(skity_golden_test PRIVATE
+        SKITY_CORETEXT_CHECKER_SOURCE_SHA256="${_input_sha256}")
+    endif()
+  endforeach()
+  set(_ct_reference_source "${CMAKE_CURRENT_LIST_DIR}/native_reference/coretext_reference.cc")
+  file(SHA256 "${_ct_reference_source}" _ct_reference_sha256)
+  set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${_ct_reference_source}")
+  add_executable(skity_coretext_reference "${_ct_reference_source}")
+  set_target_properties(skity_coretext_reference PROPERTIES
+    CXX_STANDARD 17 CXX_STANDARD_REQUIRED ON
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/test/golden")
+  target_compile_definitions(skity_coretext_reference PRIVATE
+    SKITY_CORETEXT_REFERENCE_SOURCE_SHA256="${_ct_reference_sha256}")
+  target_link_libraries(skity_coretext_reference PRIVATE
+    "-framework CoreText" "-framework CoreFoundation" "-framework CoreGraphics")
+endif()
