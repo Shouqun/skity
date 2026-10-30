@@ -58,7 +58,7 @@
     "test/golden/common/golden_test_check.hpp": "99220f08795519e7e779e962413a95942cce7dbf732d6ff52d23f99f081e84d8",
     "test/golden/native_reference/coretext_reference.cc": "84cc3dad0ce1fb3b64f3d0e683fec0a6807e8adacc7a66604414e5293c37b9c3",
     "tools/coretext_profile.py": "d1d6877a4b7f65aa0172d9107b5183ec96f8dd6e4e48494fa2c23bbd64af7071",
-    "tools/test-runner.py": "32245667a3afd64a13f48f8f3c29d81d95c31cd05f197246cfc592cef7f97ae7",
+    "tools/test-runner.py": "39f05511ec8fc2ce640185698dac0d60a7ea7c6049c163c6f126221b9a86bd5d",
     "tools/tests/coretext_profile_test.py": "e98ba0a43e20b84502bb0b35f567dbe057f87b0c6b9415325dbf35ecb17edcc1"
   }
 }
