@@ -255,11 +255,15 @@ if (${SKITY_IO_MODULE})
     endif()
 endif()
 
-# no-rtti
+# Match standard exception identity while retaining the legacy defaults.
 if (MSVC)
     target_compile_options(skity_unit_test PUBLIC /EHsc /GR-)
 else()
-    target_compile_options(skity_unit_test PUBLIC -fno-rtti)
+    if(SKITY_CPP_ALLOCATION_RECOVERY)
+        target_compile_options(skity_unit_test PUBLIC -frtti)
+    else()
+        target_compile_options(skity_unit_test PUBLIC -fno-rtti)
+    endif()
 endif()
 
 if (${SKITY_TEST_COVERAGE} AND CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
@@ -374,7 +378,11 @@ if (${SKITY_VK_BACKEND})
     if (MSVC)
         target_compile_options(skity_vulkan_unit_test PUBLIC /EHsc /GR-)
     else()
-        target_compile_options(skity_vulkan_unit_test PUBLIC -fno-rtti)
+        if(SKITY_CPP_ALLOCATION_RECOVERY)
+            target_compile_options(skity_vulkan_unit_test PUBLIC -frtti)
+        else()
+            target_compile_options(skity_vulkan_unit_test PUBLIC -fno-rtti)
+        endif()
     endif()
     if (${SKITY_TEST_COVERAGE} AND CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
         target_compile_options(skity_vulkan_unit_test PRIVATE --coverage -O0 -g)
@@ -392,6 +400,33 @@ endif()
 
 
 if(SKITY_CPP_ALLOCATION_RECOVERY)
+  # Match core exception options in a distinct production-visibility image.
+  # Internal unit-test symbol visibility must not hide consumer-boundary bugs.
+  add_library(skity-recovery-exception-test-image SHARED
+              base/recovery_exception_image.cc)
+  set_target_properties(skity-recovery-exception-test-image PROPERTIES CXX_STANDARD 17)
+  target_compile_options(skity-recovery-exception-test-image PRIVATE
+                         $<TARGET_PROPERTY:skity,COMPILE_OPTIONS>)
+  if(NOT MSVC)
+    target_compile_options(skity-recovery-exception-test-image PRIVATE
+                           -fvisibility=hidden -fvisibility-inlines-hidden)
+  endif()
+  # A distinct ordinary C++ consumer must contain no legacy -fno-rtti unit
+  # objects: their local typeinfo can conceal the cross-image mismatch.
+  add_executable(skity-recovery-exception-consumer base/recovery_exception_test.cc)
+  set_target_properties(skity-recovery-exception-consumer PROPERTIES
+                       CXX_STANDARD 17 OUTPUT_NAME skity_unit_test
+                       RUNTIME_OUTPUT_DIRECTORY
+                       "${CMAKE_BINARY_DIR}/recovery-exception-consumer/test/ut")
+  target_link_libraries(skity-recovery-exception-consumer PRIVATE
+                        skity-recovery-exception-test-image gtest_main)
+  if(MSVC)
+    target_compile_options(skity-recovery-exception-consumer PRIVATE /EHsc /GR)
+  else()
+    target_compile_options(skity-recovery-exception-consumer PRIVATE -fexceptions -frtti)
+  endif()
+  add_test(NAME skity-recovery-exception-consumer
+           COMMAND skity-recovery-exception-consumer)
   # Real allocation refusal must reach shared-library code under sanitizers.
   # Private replacement operators bind locally in each tested image; only the
   # counter is shared. None of these support sources enter product builds.

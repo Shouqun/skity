@@ -177,6 +177,25 @@ canvas saves for C++ callers. The default remains OFF. Set both
 configurations are refused at configure time. This mode defines no new C error
 conversion or foreign-unwinding contract. Public C++ signatures stay unchanged.
 
+Non-MSVC recovery core, codec and IO builds and their C++ test clients retain
+RTTI for standard exception type identity across shared library boundaries. In particular, Darwin hidden-visibility code compiled with
+`-fno-rtti` can throw a local `std::bad_alloc` type that an ordinary external
+C++ caller cannot match. The default no-exception profile is unchanged.
+
+The permanent consumer regression deliberately uses a separate RTTI-enabled
+executable and a hidden image with the actual core compile options. Reusing
+legacy no-RTTI unit objects in that executable can conceal the mismatch. With
+a recovery unit build, run it through the same unified runner:
+
+```sh
+cmake --build build-recovery --target skity-recovery-exception-consumer
+python3 tools/test-runner.py --suite=unit --run-only \
+  --build-dir=build-recovery/recovery-exception-consumer
+```
+
+The same-image control and external `std::bad_alloc`/`std::length_error` catches
+must all pass. These test-only images have no product installation rules.
+
 Catch allocation failures at the owning C++ transaction boundary. A refused
 Save preserves the caller's matrix, clip and save depth; successful Save keeps
 its ordinary return value. This is not a promise of general allocation recovery
