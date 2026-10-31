@@ -176,29 +176,9 @@ bool Font::VisitGlyphBitmap(GlyphID glyph, const Paint& paint,
                             std::size_t maximum_readable_bytes,
                             GlyphBitmapVisitor visitor,
                             const void* context) const {
-  if (!visitor || maximum_readable_bytes == 0 ||
-      !std::isfinite(context_scale) || context_scale <= 0 ||
-      !std::isfinite(GetSize()) || !std::isfinite(GetScaleX()) ||
-      !std::isfinite(GetSkewX()) || !std::isfinite(transform.GetScaleX()) ||
-      !std::isfinite(transform.GetSkewX()) ||
-      !std::isfinite(transform.GetSkewY()) ||
-      !std::isfinite(transform.GetScaleY())) {
-    return false;
-  }
-  Font source = *this;
-  auto typeface = source.GetTypefaceOrDefault();
-  if (!typeface) return false;
-  const Matrix22 transform22{transform.GetScaleX(), transform.GetSkewX(),
-                             transform.GetSkewY(), transform.GetScaleY()};
-  const auto desc = ScalerContextDesc::MakeTransformed(
-      source, paint, context_scale, transform22);
-  auto container =
-      ScalerContextCache::GlobalScalerContextCache()->FindOrCreateScalerContext(
-          desc, typeface);
-  auto image = container->PrepareOwnedImage(PackedGlyphID(glyph), paint,
-                                            maximum_readable_bytes);
-  if (!image.Complete() || !image.Get()) return false;
-  return visitor(*image.Get(), image.ReadableBytes(), context);
+  return VisitGlyphBitmapRaster(glyph, GlyphBitmapRasterOptions{}, paint,
+                                context_scale, transform,
+                                maximum_readable_bytes, visitor, context);
 }
 
 void Font::LoadGlyphBitmap(const GlyphID* glyphs, uint32_t count,
@@ -254,6 +234,52 @@ void Font::LoadGlyphBitmapAtPhase(const GlyphID* glyphs, uint32_t count,
   container->PrepareImages(&packed_glyph_id, 1, glyph_data, paint);
 }
 #endif
+
+bool Font::VisitGlyphBitmapRaster(GlyphID glyph,
+                                  GlyphBitmapRasterOptions options,
+                                  const Paint& paint, float context_scale,
+                                  const Matrix& transform,
+                                  std::size_t maximum_readable_bytes,
+                                  GlyphBitmapVisitor visitor,
+                                  const void* context) const {
+  if (!visitor || maximum_readable_bytes == 0 || options.subpixel_x_phase > 3 ||
+      options.subpixel_y_phase > 3 || options.native_raster_phase > 4 ||
+      !std::isfinite(context_scale) || context_scale <= 0 ||
+      !std::isfinite(GetSize()) || !std::isfinite(GetScaleX()) ||
+      !std::isfinite(GetSkewX()) || !std::isfinite(transform.GetScaleX()) ||
+      !std::isfinite(transform.GetSkewX()) ||
+      !std::isfinite(transform.GetSkewY()) ||
+      !std::isfinite(transform.GetScaleY())) {
+    return false;
+  }
+  Font source = *this;
+  auto typeface = source.GetTypefaceOrDefault();
+  if (!typeface) return false;
+  const Matrix22 transform22{transform.GetScaleX(), transform.GetSkewX(),
+                             transform.GetSkewY(), transform.GetScaleY()};
+  auto desc = ScalerContextDesc::MakeTransformed(source, paint, context_scale,
+                                                 transform22);
+  if (options.native_raster_phase) {
+#if defined(__APPLE__)
+    if (context_scale != 1.f || transform.HasPersp() ||
+        transform.GetScaleX() != 1.f || transform.GetScaleY() != 1.f ||
+        transform.GetSkewX() != 0.f || transform.GetSkewY() != 0.f ||
+        !NativePhaseDescriptor(source, paint, options.native_raster_phase - 1,
+                               &desc))
+      return false;
+#else
+    return false;
+#endif
+  }
+  auto container =
+      ScalerContextCache::GlobalScalerContextCache()->FindOrCreateScalerContext(
+          desc, typeface);
+  auto image = container->PrepareOwnedImage(
+      PackedGlyphID(glyph, options.subpixel_x_phase, options.subpixel_y_phase),
+      paint, maximum_readable_bytes);
+  if (!image.Complete() || !image.Get()) return false;
+  return visitor(*image.Get(), image.ReadableBytes(), context);
+}
 
 void Font::LoadGlyphBitmapInfo(const GlyphID* glyphs, uint32_t count,
                                const GlyphData* glyph_data[],
