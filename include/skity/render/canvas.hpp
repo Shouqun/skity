@@ -13,6 +13,7 @@
 #include <skity/graphic/sampling_options.hpp>
 #include <skity/macros.hpp>
 #include <skity/text/glyph.hpp>
+#include <skity/text/glyph_raster.hpp>
 #include <skity/text/typeface.hpp>
 
 namespace skity {
@@ -345,6 +346,20 @@ class SKITY_API Canvas {
                   const float positions_y[], const Font& font,
                   const Paint& paint);
 
+  // Draw already-rasterized texels in current user coordinates. No font lookup.
+  // Coverage uses solid fill paint; intrinsic color ignores paint RGB/shader.
+  // Only affine placement, nearest/linear sampling, fill style and no per-draw
+  // image/mask/path filters are admitted; use an outer layer for effects.
+  // Pixel staging is bounded conservatively by maximum_pixel_bytes (A8 may
+  // expand to RGBA on software). Metadata and backend retirement are separate.
+  // false means validation/resource refusal before queuing this primitive.
+  // true means recorded, not GPU completion. C++ recovery builds may throw on
+  // allocation failure; an owned frame must then be abandoned, not presented.
+  bool CanDrawGlyphRaster(const GlyphRaster&, const Rect&, FilterMode,
+                          const Paint&, size_t maximum_pixel_bytes) const;
+  bool DrawGlyphRaster(const GlyphRaster&, const Rect&, FilterMode,
+                       const Paint&, size_t maximum_pixel_bytes);
+
   uint32_t Width() const;
   uint32_t Height() const;
 
@@ -404,6 +419,12 @@ class SKITY_API Canvas {
   virtual void OnDrawGlyphs(uint32_t count, const GlyphID glyphs[],
                             const float position_x[], const float position_y[],
                             const Font& font, const Paint& paint) = 0;
+
+  virtual bool OnCanDrawGlyphRaster(const GlyphRaster&) const { return true; }
+  // Default owns image pixels for software/recording; hardware overrides this
+  // with its text geometry. Neither path retains the borrowed raster object.
+  virtual bool OnDrawGlyphRaster(const GlyphRaster&, const Rect&, FilterMode,
+                                 const Paint&);
 
   virtual void OnDrawPaint(Paint const& paint) = 0;
 

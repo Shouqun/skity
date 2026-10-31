@@ -22,6 +22,9 @@ class GPUBlitPassVK : public GPUBlitPass {
   void UploadTextureData(std::shared_ptr<GPUTexture> texture, uint32_t offset_x,
                          uint32_t offset_y, uint32_t width, uint32_t height,
                          void* data) override;
+  bool UploadTextureDataChecked(std::shared_ptr<GPUTexture> texture, uint32_t x,
+                                uint32_t y, uint32_t width, uint32_t height,
+                                const void* data);
 
   void UploadBufferData(GPUBuffer* buffer, void* data, size_t size) override;
 

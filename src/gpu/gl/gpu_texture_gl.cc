@@ -41,6 +41,28 @@ std::shared_ptr<GPUTextureGL> GPUTextureGL::Create(
   return texture;
 }
 
+bool GPUTextureGL::UploadDataChecked(uint32_t x, uint32_t y, uint32_t width,
+                                     uint32_t height, const void* data,
+                                     size_t readable) {
+  auto* gl = GLInterface::GlobalInterface();
+  if (!ValidUpload(x, y, width, height, data, readable) || !texture_id_ ||
+      texture_target_ != GL_TEXTURE_2D || !gl || !gl->fGetError ||
+      !gl->fBindTexture || !gl->fTexSubImage2D || !gl->fPixelStorei)
+    return false;
+  if (gl->fGetError() != GL_NO_ERROR) return false;
+  // Raw calls preserve the error until this checked boundary; GL_CALL's
+  // optional validation logger consumes errors and cannot supply a success
+  // result.
+  gl->fBindTexture(texture_target_, texture_id_);
+  gl->fPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+  gl->fTexSubImage2D(texture_target_, 0, x, y, width, height,
+                     ExternalFormatFrom(desc_.format),
+                     ExternalTypeFrom(desc_.format), data);
+  const bool ok = gl->fGetError() == GL_NO_ERROR;
+  gl->fBindTexture(texture_target_, 0);
+  return gl->fGetError() == GL_NO_ERROR && ok;
+}
+
 void GPUTextureGL::UploadData(uint32_t offset_x, uint32_t offset_y,
                               uint32_t width, uint32_t height, void* data) {
   SKITY_TRACE_EVENT(GPUTextureGL_UploadData);

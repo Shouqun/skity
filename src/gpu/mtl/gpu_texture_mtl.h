@@ -29,6 +29,9 @@ class GPUTextureMTL : public GPUTexture {
 
   void UploadData(uint32_t offset_x, uint32_t offset_y, uint32_t width,
                   uint32_t height, void* data) override;
+  bool UploadDataChecked(uint32_t x, uint32_t y, uint32_t width,
+                         uint32_t height, const void* data,
+                         size_t readable_bytes) override;
 
   size_t GetBytes() const override;
 

@@ -13,20 +13,15 @@
 
 namespace skity {
 
-HWDynamicTextDraw::HWDynamicTextDraw(Matrix draw_transform,
-                                     const Matrix& glyph_transform,
-                                     ArrayList<GlyphRect, 16> glyph_rects,
-                                     Paint paint,
-                                     TextGeometryData::BatchedTexture textures,
-                                     std::shared_ptr<GPUSampler> sampler,
-                                     TextAtlasEffect effect, bool is_stroke,
-                                     std::optional<Matrix> layer_to_local)
+HWDynamicTextDraw::HWDynamicTextDraw(
+    Matrix draw_transform, const Matrix& glyph_transform,
+    ArrayList<GlyphRect, 16> glyph_rects, Paint paint,
+    TextGeometryData::BatchedTexture textures,
+    std::shared_ptr<GPUSampler> sampler, TextAtlasEffect effect, bool is_stroke,
+    std::optional<Matrix> layer_to_local, bool color_unpremultiplied)
     : HWDynamicDraw(std::move(draw_transform)),
-      geometry_data_{{},
-                     std::move(textures),
-                     std::move(sampler),
-                     effect,
-                     std::move(layer_to_local)},
+      geometry_data_{{},     std::move(textures),       std::move(sampler),
+                     effect, std::move(layer_to_local), color_unpremultiplied},
       shader_local_matrix_(
           paint.GetShader() ? paint.GetShader()->GetLocalMatrix() : Matrix{}),
       is_stroke_(is_stroke) {
@@ -100,7 +95,8 @@ bool HWDynamicTextDraw::OnMergeIfPossible(HWDraw* draw) {
   if (GetTransform() != other->GetTransform() ||
       data.effect != other_data.effect || data.sampler != other_data.sampler ||
       data.textures != other_data.textures ||
-      data.layer_to_local != other_data.layer_to_local) {
+      data.layer_to_local != other_data.layer_to_local ||
+      data.color_unpremultiplied != other_data.color_unpremultiplied) {
     return false;
   }
 

@@ -51,6 +51,7 @@ struct TextGeometryData {
   TextAtlasEffect effect = TextAtlasEffect::kA8Coverage;
   // Maps layer-space positions back to the paint shader's draw-local space.
   std::optional<Matrix> layer_to_local;
+  bool color_unpremultiplied = false;
 };
 
 class WGSLTextGeometry : public HWWGSLGeometry {
