@@ -83,6 +83,15 @@ class GPUTexture {
   virtual void UploadData(uint32_t offset_x, uint32_t offset_y, uint32_t width,
                           uint32_t height, void* data) = 0;
 
+  // Checked staging is opt-in. Unknown/external implementations refuse instead
+  // of claiming that a void upload succeeded. Completion remains asynchronous.
+  virtual bool UploadDataChecked(uint32_t, uint32_t, uint32_t, uint32_t,
+                                 const void*, size_t) {
+    return false;
+  }
+  bool ValidUpload(uint32_t x, uint32_t y, uint32_t width, uint32_t height,
+                   const void* data, size_t readable_bytes) const;
+
  protected:
   explicit GPUTexture(const GPUTextureDescriptor& descriptor);
 

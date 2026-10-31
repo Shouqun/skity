@@ -4,6 +4,8 @@
 
 #include "src/gpu/vk/gpu_texture_vk.hpp"
 
+#include <limits>
+
 #include "src/gpu/vk/gpu_blit_pass_vk.hpp"
 #include "src/gpu/vk/gpu_command_buffer_vk.hpp"
 #include "src/gpu/vk/vulkan_context_state.hpp"
@@ -461,25 +463,38 @@ size_t GPUTextureVK::GetBytes() const {
          GetTextureFormatBytesPerPixel(desc.format) * desc.sample_count;
 }
 
-void GPUTextureVK::UploadData(uint32_t offset_x, uint32_t offset_y,
-                              uint32_t width, uint32_t height, void* data) {
+void GPUTextureVK::UploadData(uint32_t x, uint32_t y, uint32_t width,
+                              uint32_t height, void* data) {
+  if (!width || !height) return;
+  const size_t bpp = GetTextureFormatBytesPerPixel(desc_.format);
+  if (!bpp || width > std::numeric_limits<size_t>::max() / bpp / height) return;
+  (void)UploadDataChecked(x, y, width, height, data,
+                          size_t(width) * height * bpp);
+}
+bool GPUTextureVK::UploadDataChecked(uint32_t offset_x, uint32_t offset_y,
+                                     uint32_t width, uint32_t height,
+                                     const void* data, size_t readable) {
+  if (!ValidUpload(offset_x, offset_y, width, height, data, readable))
+    return false;
+
   const auto state = LockState();
   if (state == nullptr || data == nullptr || width == 0 || height == 0) {
-    return;
+    return false;
   }
 
   auto command_buffer = std::make_shared<GPUCommandBufferVK>(state);
   if (!command_buffer->Init()) {
-    return;
+    return false;
   }
 
   command_buffer->SetLabel("VkUploadTextureData");
 
   auto blit_pass = std::make_shared<GPUBlitPassVK>(state, command_buffer.get());
-  blit_pass->UploadTextureData(shared_from_this(), offset_x, offset_y, width,
-                               height, data);
+  if (!blit_pass->UploadTextureDataChecked(shared_from_this(), offset_x,
+                                           offset_y, width, height, data))
+    return false;
   blit_pass->End();
-  command_buffer->Submit();
+  return command_buffer->Submit();
 }
 
 }  // namespace skity

@@ -4,7 +4,25 @@
 
 #include "src/gpu/gpu_texture.hpp"
 
+#include <limits>
+
 namespace skity {
+
+bool GPUTexture::ValidUpload(uint32_t x, uint32_t y, uint32_t width,
+                             uint32_t height, const void* data,
+                             size_t readable) const {
+  if (!data || !width || !height || desc_.sample_count != 1 ||
+      desc_.storage_mode == GPUTextureStorageMode::kMemoryless ||
+      x > desc_.width || y > desc_.height || width > desc_.width - x ||
+      height > desc_.height - y)
+    return false;
+  if (static_cast<unsigned>(desc_.format) >=
+      static_cast<unsigned>(GPUTextureFormat::kInvalid))
+    return false;
+  const size_t bpp = GetTextureFormatBytesPerPixel(desc_.format);
+  return bpp && width <= std::numeric_limits<size_t>::max() / bpp / height &&
+         size_t(width) * height * bpp <= readable;
+}
 
 GPUTexture::GPUTexture(const GPUTextureDescriptor& desc) : desc_(desc) {}
 

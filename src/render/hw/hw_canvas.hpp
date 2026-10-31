@@ -57,6 +57,9 @@ class HWCanvas : public Canvas {
   void OnDrawPath(const Path& path, const Paint& paint) override;
 
   void OnDrawPaint(const Paint& paint) override;
+  bool OnCanDrawGlyphRaster(const GlyphRaster&) const override;
+  bool OnDrawGlyphRaster(const GlyphRaster&, const Rect&, FilterMode,
+                         const Paint&) override;
 
   void OnSaveLayer(const Rect& bounds, const Paint& paint) override;
 

@@ -19,7 +19,8 @@ class HWDynamicTextDraw : public HWDynamicDraw {
                     TextGeometryData::BatchedTexture textures,
                     std::shared_ptr<GPUSampler> sampler, TextAtlasEffect effect,
                     bool is_stroke,
-                    std::optional<Matrix> layer_to_local = std::nullopt);
+                    std::optional<Matrix> layer_to_local = std::nullopt,
+                    bool color_unpremultiplied = false);
 
   ~HWDynamicTextDraw() override = default;
 

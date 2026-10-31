@@ -2,8 +2,11 @@
 // Licensed under the Apache License Version 2.0 that can be found in the
 // LICENSE file in the root directory of this source tree.
 
+#include <cmath>
 #include <cstring>
+#include <limits>
 #include <memory>
+#include <skity/io/pixmap.hpp>
 #if defined(SKITY_CPP_ALLOCATION_RECOVERY)
 #include <optional>
 #endif
@@ -460,6 +463,89 @@ void Canvas::DrawGlyphs(int count, const GlyphID *glyphs,
                         const float *position_x, const float *position_y,
                         const Font &font, const Paint &paint) {
   this->OnDrawGlyphs(count, glyphs, position_x, position_y, font, paint);
+}
+
+bool Canvas::CanDrawGlyphRaster(const GlyphRaster &raster, const Rect &bounds,
+                                FilterMode sampling, const Paint &paint,
+                                size_t maximum) const {
+  if (sampling != FilterMode::kNearest && sampling != FilterMode::kLinear)
+    return false;
+  if (paint.GetStyle() != Paint::kFill_Style || paint.GetTypeface() ||
+      paint.GetMaskFilter() || paint.GetImageFilter() ||
+      paint.GetPathEffect() ||
+      (raster.GetFormat() == GlyphRaster::Format::kA8 && paint.GetShader()))
+    return false;
+  const auto color = paint.GetFillColor();
+  if (!std::isfinite(color.r) || !std::isfinite(color.g) ||
+      !std::isfinite(color.b) || !std::isfinite(color.a) ||
+      paint.GetBlendMode() < BlendMode::kClear ||
+      paint.GetBlendMode() > BlendMode::kLastMode)
+    return false;
+  const auto &matrix = GetTotalMatrix();
+  if (!matrix.IsFinite() || matrix.HasPersp()) return false;
+  auto finite = [](const Rect &r) {
+    return std::isfinite(r.Left()) && std::isfinite(r.Top()) &&
+           std::isfinite(r.Right()) && std::isfinite(r.Bottom()) &&
+           r.Width() >= 0 && r.Height() >= 0;
+  };
+  if (!finite(bounds) || !finite(matrix.MapRect(bounds))) return false;
+  if (bounds.IsEmpty()) return true;
+  const size_t bytes = raster.PixelBytes();
+  const size_t multiple =
+      raster.GetFormat() == GlyphRaster::Format::kA8 ? 4 : 1;
+  if (bytes > std::numeric_limits<size_t>::max() / multiple ||
+      bytes * multiple > maximum)
+    return false;
+  return OnCanDrawGlyphRaster(raster);
+}
+bool Canvas::DrawGlyphRaster(const GlyphRaster &raster, const Rect &bounds,
+                             FilterMode sampling, const Paint &paint,
+                             size_t maximum) {
+  if (!CanDrawGlyphRaster(raster, bounds, sampling, paint, maximum))
+    return false;
+  return bounds.IsEmpty() || OnDrawGlyphRaster(raster, bounds, sampling, paint);
+}
+bool Canvas::OnDrawGlyphRaster(const GlyphRaster &raster, const Rect &bounds,
+                               FilterMode sampling, const Paint &paint) {
+  const bool coverage = raster.GetFormat() == GlyphRaster::Format::kA8;
+  const auto type = raster.GetFormat() == GlyphRaster::Format::kBGRA8
+                        ? ColorType::kBGRA
+                        : ColorType::kRGBA;
+  const auto alpha =
+      coverage || raster.GetAlpha() == GlyphRaster::Alpha::kUnpremultiplied
+          ? AlphaType::kUnpremul_AlphaType
+          : AlphaType::kPremul_AlphaType;
+  auto pixmap =
+      std::make_shared<Pixmap>(raster.Width(), raster.Height(), alpha, type);
+  auto *dst = static_cast<uint8_t *>(pixmap->WritableAddr());
+  if (!dst) return false;
+  const auto color = paint.GetColor();
+  for (uint32_t y = 0; y < raster.Height(); ++y) {
+    const auto *row = raster.Pixels() + size_t(y) * raster.RowBytes();
+    auto *output = dst + size_t(y) * pixmap->RowBytes();
+    if (!coverage) {
+      std::memcpy(output, row, raster.RowBytes());
+      continue;
+    }
+    for (uint32_t x = 0; x < raster.Width(); ++x) {
+      if (!row[x]) continue;
+      output[4 * x] = ColorGetR(color);
+      output[4 * x + 1] = ColorGetG(color);
+      output[4 * x + 2] = ColorGetB(color);
+      output[4 * x + 3] =
+          uint8_t((unsigned(ColorGetA(color)) * row[x] + 127) / 255);
+    }
+  }
+  auto image = Image::MakeImage(pixmap);
+  if (!image) return false;
+  Paint composite;
+  composite.SetColor(Color_WHITE);
+  if (!coverage) composite.SetAlphaF(paint.GetAlphaF());
+  composite.SetBlendMode(paint.GetBlendMode());
+  composite.SetColorFilter(paint.GetColorFilter());
+  DrawImage(image, bounds, SamplingOptions(sampling, MipmapMode::kNone),
+            &composite);
+  return true;
 }
 
 uint32_t Canvas::Width() const { return this->OnGetWidth(); }

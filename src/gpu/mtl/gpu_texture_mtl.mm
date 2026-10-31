@@ -46,6 +46,16 @@ void GPUTextureMTL::UploadData(uint32_t offset_x, uint32_t offset_y, uint32_t wi
                   bytesPerRow:width * GetTextureFormatBytesPerPixel(GetDescriptor().format)];
 }
 
+bool GPUTextureMTL::UploadDataChecked(uint32_t x, uint32_t y, uint32_t width, uint32_t height,
+                                      const void* data, size_t readable) {
+  if (!ValidUpload(x, y, width, height, data, readable) || mtl_texture_ == nil ||
+      mtl_texture_.storageMode == MTLStorageModePrivate ||
+      mtl_texture_.storageMode == MTLStorageModeMemoryless)
+    return false;
+  UploadData(x, y, width, height, const_cast<void*>(data));
+  return true;
+}
+
 size_t GPUTextureMTL::GetBytes() const {
   auto& desc = GetDescriptor();
   if (desc.storage_mode == GPUTextureStorageMode::kMemoryless) {

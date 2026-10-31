@@ -102,6 +102,7 @@ add_executable(skity_unit_test
     text/atlas_glyph_test.cc
     text/glyph_image_test.cc
     text/glyph_bitmap_raster_options_test.cc
+    text/glyph_raster_test.cc
     text/font_path_visit_test.cc
     text/scaler_context_cache_test.cc
     text/text_blob_test.cc

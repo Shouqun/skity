@@ -151,16 +151,20 @@ GPUBlitPassVK::GPUBlitPassVK(std::shared_ptr<const VulkanContextState> state,
     : state_(std::move(state)), command_buffer_(command_buffer) {}
 
 void GPUBlitPassVK::UploadTextureData(std::shared_ptr<GPUTexture> texture,
-                                      uint32_t offset_x, uint32_t offset_y,
-                                      uint32_t width, uint32_t height,
-                                      void* data) {
+                                      uint32_t x, uint32_t y, uint32_t width,
+                                      uint32_t height, void* data) {
+  (void)UploadTextureDataChecked(std::move(texture), x, y, width, height, data);
+}
+bool GPUBlitPassVK::UploadTextureDataChecked(
+    std::shared_ptr<GPUTexture> texture, uint32_t offset_x, uint32_t offset_y,
+    uint32_t width, uint32_t height, const void* data) {
   const auto texture_ref = texture;
   auto texture_vk = GPUTextureVK::Cast(texture.get());
   if (texture_vk == nullptr || state_ == nullptr ||
       command_buffer_ == nullptr || data == nullptr || width == 0 ||
       height == 0) {
     LOGE("Failed to upload Vulkan texture data: invalid upload state");
-    return;
+    return false;
   }
 
   if (texture_vk->GetImage() == VK_NULL_HANDLE ||
@@ -168,19 +172,19 @@ void GPUBlitPassVK::UploadTextureData(std::shared_ptr<GPUTexture> texture,
     LOGE(
         "Failed to upload Vulkan texture data: image or command buffer is "
         "unavailable");
-    return;
+    return false;
   }
 
   if (texture_vk->GetDescriptor().sample_count != 1) {
     LOGW("Uploading CPU data to multisampled Vulkan textures is unsupported");
-    return;
+    return false;
   }
 
   const size_t bytes_per_pixel =
       GetTextureFormatBytesPerPixel(texture_vk->GetDescriptor().format);
   if (bytes_per_pixel == 0) {
     LOGE("Failed to upload Vulkan texture data: invalid texture format");
-    return;
+    return false;
   }
 
   const size_t upload_size =
@@ -190,8 +194,8 @@ void GPUBlitPassVK::UploadTextureData(std::shared_ptr<GPUTexture> texture,
   staging_desc.storage_mode = GPUBufferStorageMode::kHostVisible;
   auto staging_buffer = std::make_unique<GPUBufferVK>(
       staging_desc, state_, GPUBufferVKMemoryType::kHostVisible);
-  if (!staging_buffer->UploadData(data, upload_size)) {
-    return;
+  if (!staging_buffer->UploadData(const_cast<void*>(data), upload_size)) {
+    return false;
   }
 
   TransitionImageLayout(*state_, command_buffer_->GetCommandBuffer(),
@@ -219,6 +223,8 @@ void GPUBlitPassVK::UploadTextureData(std::shared_ptr<GPUTexture> texture,
                         *texture_vk, texture_vk->GetPreferredLayout());
   command_buffer_->RecordStageBuffer(std::move(staging_buffer));
   command_buffer_->RecordCleanupAction([texture_ref]() {});
+
+  return true;
 }
 
 void GPUBlitPassVK::UploadBufferData(GPUBuffer* buffer, void* data,

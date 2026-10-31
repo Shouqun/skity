@@ -188,7 +188,7 @@ fn load_text_texel(font_index: i32, p: vec2<i32>) -> vec4<f32> {
 
 fn get_text_atlas_color(font_index: i32, uv: vec2<f32>,
                         origin: vec2<i32>) -> vec4<f32> {
-  if uTextLinearFilter == u32(0) {
+  if uTextSamplingInfo.x == u32(0) {
     return load_text_texel(font_index, origin + vec2<i32>(i32(floor(uv.x)), i32(floor(uv.y))));
   }
   let p: vec2<f32> = uv - vec2<f32>(0.5);
@@ -206,7 +206,7 @@ fn get_text_atlas_color(font_index: i32, uv: vec2<f32>,
 
 void WGSLTextGeometry::WriteFSUniforms(std::stringstream& ss) const {
   ss << R"(
-@group(3) @binding(0) var<uniform> uTextLinearFilter: u32;
+@group(3) @binding(0) var<uniform> uTextSamplingInfo: vec2<u32>;
 @group(3) @binding(1) var uTextAtlas0: texture_2d<f32>;
 @group(3) @binding(2) var uTextAtlas1: texture_2d<f32>;
 @group(3) @binding(3) var uTextAtlas2: texture_2d<f32>;
@@ -227,6 +227,8 @@ void WGSLTextGeometry::WriteFSColor(std::stringstream& ss) const {
   if (data_.effect == TextAtlasEffect::kColorSwizzleRB) {
     ss << "  color = color.bgra;\n";
   }
+  ss << "  if uTextSamplingInfo.y != u32(0) { color = vec4<f32>(color.rgb * "
+        "color.a, color.a); }\n";
   ss << "  color *= text_paint_alpha;\n";
 }
 
@@ -318,7 +320,7 @@ void WGSLTextGeometry::PrepareCMD(Command* cmd, HWDrawContext* context,
   }
   auto filter_entry = geometry_group->GetEntry(0);
   if (filter_entry == nullptr || filter_entry->type_definition == nullptr ||
-      filter_entry->type_definition->name != "u32") {
+      filter_entry->type_definition->name != "vec2<u32>") {
     return;
   }
   uint32_t linear_filter = 0;
@@ -327,7 +329,9 @@ void WGSLTextGeometry::PrepareCMD(Command* cmd, HWDrawContext* context,
     DEBUG_CHECK(descriptor.min_filter == descriptor.mag_filter);
     linear_filter = descriptor.mag_filter == GPUFilterMode::kLinear ? 1u : 0u;
   }
-  filter_entry->type_definition->SetData(&linear_filter, sizeof(linear_filter));
+  const uint32_t sampling_info[2] = {linear_filter,
+                                     data_.color_unpremultiplied ? 1u : 0u};
+  filter_entry->type_definition->SetData(sampling_info, sizeof(sampling_info));
   UploadBindGroup(geometry_group->group, filter_entry, cmd, context);
 
   std::shared_ptr<GPUTexture> last_texture;

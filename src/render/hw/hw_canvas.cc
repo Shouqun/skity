@@ -14,6 +14,7 @@
 #include <skity/text/text_blob.hpp>
 
 #include "src/effect/image_filter_base.hpp"
+#include "src/gpu/gpu_device.hpp"
 #include "src/gpu/gpu_surface_impl.hpp"
 #include "src/logging.hpp"
 #include "src/render/canvas_state.hpp"
@@ -22,6 +23,7 @@
 #include "src/render/hw/draw/hw_dynamic_path_clip.hpp"
 #include "src/render/hw/draw/hw_dynamic_path_draw.hpp"
 #include "src/render/hw/draw/hw_dynamic_rrect_draw.hpp"
+#include "src/render/hw/draw/hw_dynamic_text_draw.hpp"
 #include "src/render/hw/draw/wgx_utils.hpp"
 #include "src/render/hw/filters/hw_filters.hpp"
 #include "src/render/hw/hw_blend_plan.hpp"
@@ -515,6 +517,68 @@ void HWCanvas::DrawGlyphsInternal(uint32_t count, const GlyphID* glyphs,
       CurrentLayer()->AddDraw(draw);
     }
   }
+}
+
+bool HWCanvas::OnCanDrawGlyphRaster(const GlyphRaster& raster) const {
+  auto* device = surface_->GetGPUContext()->GetGPUDevice();
+  return !layer_stack_.empty() && device &&
+         raster.Width() <= device->GetMaxTextureSize() &&
+         raster.Height() <= device->GetMaxTextureSize();
+}
+bool HWCanvas::OnDrawGlyphRaster(const GlyphRaster& raster, const Rect& bounds,
+                                 FilterMode sampling, const Paint& paint) {
+  auto* device = surface_->GetGPUContext()->GetGPUDevice();
+  const bool coverage = raster.GetFormat() == GlyphRaster::Format::kA8;
+  GPUTextureDescriptor descriptor{};
+  descriptor.width = raster.Width();
+  descriptor.height = raster.Height();
+  descriptor.format =
+      coverage ? GPUTextureFormat::kR8Unorm : GPUTextureFormat::kRGBA8Unorm;
+  descriptor.storage_mode = GPUTextureStorageMode::kHostVisible;
+  descriptor.usage =
+      static_cast<GPUTextureUsageMask>(GPUTextureUsage::kTextureBinding) |
+      static_cast<GPUTextureUsageMask>(GPUTextureUsage::kCopyDst);
+  auto texture = device->CreateTexture(descriptor);
+  if (!texture) return false;
+  if (!texture->UploadDataChecked(0, 0, raster.Width(), raster.Height(),
+                                  raster.Pixels(), raster.PixelBytes()))
+    return false;
+  GPUSamplerDescriptor sampler_descriptor;
+  sampler_descriptor.min_filter = sampler_descriptor.mag_filter =
+      ToGPUFilterMode(sampling);
+  auto sampler = device->CreateSampler(sampler_descriptor);
+  if (!sampler) return false;
+  ArrayList<GlyphRect, 16> rects;
+  rects.SetArenaAllocator(arena_allocator_);
+  rects.emplace_back(
+      Vec4{bounds.Left(), bounds.Top(), bounds.Right(), bounds.Bottom()},
+      Vec2{0, 0}, Vec2{float(raster.Width()), float(raster.Height())});
+  TextGeometryData::BatchedTexture textures{};
+  textures[0] = std::move(texture);
+  const auto effect = coverage ? TextAtlasEffect::kA8Coverage
+                      : raster.GetFormat() == GlyphRaster::Format::kBGRA8
+                          ? TextAtlasEffect::kColorSwizzleRB
+                          : TextAtlasEffect::kColor;
+  auto* draw = arena_allocator_->Make<HWDynamicTextDraw>(
+      CurrentMatrix(), Matrix{}, std::move(rects), paint, std::move(textures),
+      std::move(sampler), effect, false, std::nullopt,
+      raster.GetAlpha() == GlyphRaster::Alpha::kUnpremultiplied);
+  draw->SetSampleCount(GetCanvasSampleCount());
+  SetupLayerSpaceBoundsForDraw(draw, bounds, CurrentMatrix());
+  const auto& caps = device->GetCaps();
+  auto plan = ResolveHWBlendPlan(paint.GetBlendMode(), coverage,
+                                 coverage && IsPaintSourceOpaque(paint), caps,
+                                 CurrentLayer()->SupportsTextureCopyDstRead());
+  if (!plan)
+    plan = ResolveLegacyCoverageBlendPlan(
+        paint.GetBlendMode(), caps,
+        CurrentLayer()->SupportsTextureCopyDstRead());
+  draw->SetBlendPlan(*plan);
+  draw->SetRequiresNonOverlappingDraws(
+      !coverage && plan->dst_read_strategy == DstReadStrategy::kNativeBlend &&
+      !caps.supports_native_advanced_blend_coherent);
+  CurrentLayer()->AddDraw(draw);
+  return true;
 }
 
 void HWCanvas::DrawPathInternal(const Path& path, const Paint& paint,
