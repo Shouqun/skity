@@ -3,6 +3,7 @@
 // LICENSE file in the root directory of this source tree.
 
 #include <algorithm>
+#include <cmath>
 #include <skity/text/font.hpp>
 #include <vector>
 
@@ -168,6 +169,36 @@ bool Font::VisitGlyphPaths(const GlyphID* glyphs, uint32_t count,
   } clear{scratch, count};
   container->PreparePaths(glyphs, count, scratch);
   return visitor(scratch, count, context);
+}
+
+bool Font::VisitGlyphBitmap(GlyphID glyph, const Paint& paint,
+                            float context_scale, const Matrix& transform,
+                            std::size_t maximum_readable_bytes,
+                            GlyphBitmapVisitor visitor,
+                            const void* context) const {
+  if (!visitor || maximum_readable_bytes == 0 ||
+      !std::isfinite(context_scale) || context_scale <= 0 ||
+      !std::isfinite(GetSize()) || !std::isfinite(GetScaleX()) ||
+      !std::isfinite(GetSkewX()) || !std::isfinite(transform.GetScaleX()) ||
+      !std::isfinite(transform.GetSkewX()) ||
+      !std::isfinite(transform.GetSkewY()) ||
+      !std::isfinite(transform.GetScaleY())) {
+    return false;
+  }
+  Font source = *this;
+  auto typeface = source.GetTypefaceOrDefault();
+  if (!typeface) return false;
+  const Matrix22 transform22{transform.GetScaleX(), transform.GetSkewX(),
+                             transform.GetSkewY(), transform.GetScaleY()};
+  const auto desc = ScalerContextDesc::MakeTransformed(
+      source, paint, context_scale, transform22);
+  auto container =
+      ScalerContextCache::GlobalScalerContextCache()->FindOrCreateScalerContext(
+          desc, typeface);
+  auto image = container->PrepareOwnedImage(PackedGlyphID(glyph), paint,
+                                            maximum_readable_bytes);
+  if (!image.Complete() || !image.Get()) return false;
+  return visitor(*image.Get(), image.ReadableBytes(), context);
 }
 
 void Font::LoadGlyphBitmap(const GlyphID* glyphs, uint32_t count,

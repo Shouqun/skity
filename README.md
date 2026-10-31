@@ -63,6 +63,9 @@ More details can visit [BUILD_AND_RUN.md](./docs/BUILD_AND_RUN.md).
 See [blur conventions](docs/BLUR_FILTERS.md) for legacy radius filters and
 the explicit Gaussian-sigma mask filter.
 
+See [scoped glyph access](docs/GLYPH_ACCESS.md) for consuming glyph paths and
+bitmap pixels across reentrant loads and cache purges.
+
 ### Development
 
 The code below shows how to create a `skity::GPUSurface` instance using [GLFW](https://www.glfw.org/) with OpenGL backend. The full code can look at [window_gl.cc](./example/common/gl/window_gl.cc)
