@@ -52,7 +52,7 @@
     }
   },
   "sources": {
-    "test/golden/CMakeLists.txt": "a9f00815ac24b8dde680bd017f88e5fdbac5e084da6d0d54924c463dce461e2a",
+    "test/golden/CMakeLists.txt": "1741b9ba78c7079fd46c53be948773f47cc102e9d615046d25ed427cc28c8a5b",
     "test/golden/cases/text/text.cc": "cb805ef90c449f0102aadf3855830ea1ed54886b742b3f994eae1f0e8ecca897",
     "test/golden/common/golden_test_check.cc": "048cd0059b152f3286131207328cd91ee197566ad04eede3f4806dc4039a47c5",
     "test/golden/common/golden_test_check.hpp": "99220f08795519e7e779e962413a95942cce7dbf732d6ff52d23f99f081e84d8",

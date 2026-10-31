@@ -120,7 +120,11 @@ target_compile_definitions(skity_golden_test PUBLIC -DDISABLE_SKITY_EXPERIMENTAL
 if (MSVC)
   target_compile_options(skity_golden_test PUBLIC /EHsc /GR-)
 else()
-  target_compile_options(skity_golden_test PUBLIC -fno-rtti)
+  if(SKITY_CPP_ALLOCATION_RECOVERY)
+    target_compile_options(skity_golden_test PUBLIC -frtti)
+  else()
+    target_compile_options(skity_golden_test PUBLIC -fno-rtti)
+  endif()
 endif()
 
 

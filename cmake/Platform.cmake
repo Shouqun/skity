@@ -25,7 +25,9 @@ elseif(WIN32)
 
 else()
   if(SKITY_CPP_ALLOCATION_RECOVERY)
-    target_compile_options(skity PRIVATE -fexceptions -fno-rtti)
+    # Typed standard exceptions must retain shared-library type identity for
+    # ordinary C++ consumers, including hidden-visibility Darwin builds.
+    target_compile_options(skity PRIVATE -fexceptions -frtti)
   else()
     target_compile_options(skity PRIVATE -fno-exceptions -fno-rtti)
   endif()

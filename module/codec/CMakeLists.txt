@@ -84,7 +84,7 @@ if(SKITY_CPP_ALLOCATION_RECOVERY)
   if(MSVC)
     target_compile_options(skity-codec PRIVATE /EHsc)
   else()
-    target_compile_options(skity-codec PRIVATE -fexceptions -fno-rtti)
+    target_compile_options(skity-codec PRIVATE -fexceptions -frtti)
   endif()
 else()
   # the module's own C ABI surface shares the capi handle protocol
