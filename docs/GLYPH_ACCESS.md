@@ -34,3 +34,26 @@ python3 tools/test-runner.py --suite=unit \
 
 The tests compare legacy pixels, purge source caches during callbacks, make
 reentrant loads, verify empty/refused views and exercise concurrent requests.
+
+## Packed and native raster phases
+
+`Font::VisitGlyphBitmapRaster` takes `Font::GlyphBitmapRasterOptions` to visit
+the original packed raster source while preserving the same request-local owner and readable
+span contract. Ordinary packed X/Y phases are quarters in the range 0..3.
+`native_raster_phase` is zero for ordinary rasterization or 1..4 for Apple's
+native grayscale quarters 0..3/4. Invalid values refuse before invoking the
+visitor. Explicit native requests refuse unsupported density, transform, font
+or paint rather than falling back to ordinary rasterization. Translation and
+glyph placement are separate from these source parameters.
+
+`VisitGlyphBitmap` remains the ordinary phase-zero request and retains an
+unambiguous member address. Neither API assigns a new alpha/sampling policy, changes Font layout or certifies native
+scratch, cache memory, retained graphics storage or the caller's final quota.
+The source Font/paint must remain serialized against mutation; returned views
+must be copied before the callback returns.
+
+Run the original-source, phase, span, owner and concurrency regressions with:
+
+```sh
+python3 tools/test-runner.py --suite=unit --filter='FontRasterVisitTest.*'
+```
