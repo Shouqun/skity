@@ -6,6 +6,7 @@
 #define SRC_TEXT_SCALER_CONTEXT_CONTAINER_HPP
 
 #include <cstdlib>
+#include <limits>
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -25,8 +26,13 @@ class OwnedGlyphImage {
  public:
   OwnedGlyphImage() = default;
   OwnedGlyphImage(OwnedGlyphImage&& other) noexcept
-      : glyph_(std::move(other.glyph_)), pixels_(std::move(other.pixels_)) {
+      : glyph_(std::move(other.glyph_)),
+        pixels_(std::move(other.pixels_)),
+        readable_bytes_(other.readable_bytes_),
+        complete_(other.complete_) {
     other.glyph_.reset();
+    other.readable_bytes_ = 0;
+    other.complete_ = false;
   }
   OwnedGlyphImage& operator=(OwnedGlyphImage&& other) noexcept {
     if (this != &other) {
@@ -38,12 +44,18 @@ class OwnedGlyphImage {
         other.glyph_.reset();
       }
       pixels_ = std::move(other.pixels_);
+      readable_bytes_ = other.readable_bytes_;
+      complete_ = other.complete_;
+      other.readable_bytes_ = 0;
+      other.complete_ = false;
     }
     return *this;
   }
 
   const GlyphData* Get() const { return glyph_ ? &*glyph_ : nullptr; }
   const GlyphBitmapData& Image() const { return glyph_->Image(); }
+  std::size_t ReadableBytes() const { return readable_bytes_; }
+  bool Complete() const { return complete_; }
 
  private:
   struct FreePixels {
@@ -54,6 +66,8 @@ class OwnedGlyphImage {
   // image request. Cached paths still need an independent snapshot.
   std::optional<GlyphData> glyph_;
   std::unique_ptr<uint8_t, FreePixels> pixels_;
+  std::size_t readable_bytes_ = 0;
+  bool complete_ = false;
 
   friend class ScalerContextContainer;
 };
@@ -71,7 +85,9 @@ class ScalerContextContainer {
                const GlyphData* results[]) SKITY_EXCLUDES(mutex_);
   void PreparePaths(const GlyphID* glyph_ids, uint32_t count,
                     const GlyphData* results[]) SKITY_EXCLUDES(mutex_);
-  OwnedGlyphImage PrepareOwnedImage(PackedGlyphID glyph_id, const Paint& paint)
+  OwnedGlyphImage PrepareOwnedImage(PackedGlyphID glyph_id, const Paint& paint,
+                                    std::size_t maximum_readable_bytes =
+                                        std::numeric_limits<std::size_t>::max())
       SKITY_EXCLUDES(mutex_);
   // Compatibility view, valid until the next PrepareImages call on this
   // thread. Rendering code should retain an OwnedGlyphImage instead.

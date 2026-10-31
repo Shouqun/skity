@@ -83,7 +83,8 @@ void ScalerContextContainer::PrepareImages(const PackedGlyphID *glyph_ids,
 }
 
 OwnedGlyphImage ScalerContextContainer::PrepareOwnedImage(
-    PackedGlyphID glyph_id, const Paint &paint) SKITY_EXCLUDES(mutex_) {
+    PackedGlyphID glyph_id, const Paint &paint,
+    std::size_t maximum_readable_bytes) SKITY_EXCLUDES(mutex_) {
   std::lock_guard<std::mutex> lock(mutex_);
   OwnedGlyphImage result;
   result.glyph_.emplace(*Glyph(glyph_id));
@@ -114,6 +115,9 @@ OwnedGlyphImage ScalerContextContainer::PrepareOwnedImage(
   }
   if (!image.buffer || image.width == 0.f || image.height == 0.f) {
     image.buffer = nullptr;
+    result.complete_ =
+        (image.width == 0.f || image.height == 0.f) &&
+        (result.glyph_->GetWidth() == 0.f || result.glyph_->GetHeight() == 0.f);
     return result;
   }
   const size_t width = static_cast<size_t>(image.width);
@@ -141,6 +145,11 @@ OwnedGlyphImage ScalerContextContainer::PrepareOwnedImage(
     image = {};
     return result;
   }
+  const auto readable_bytes = height * row_bytes;
+  if (readable_bytes > maximum_readable_bytes) {
+    image = {};
+    return result;
+  }
   if (!result.pixels_) {
     // CoreText and FreeType color rendering can return reusable backend
     // storage. Copy it while the same lock still protects its contents.
@@ -164,6 +173,11 @@ OwnedGlyphImage ScalerContextContainer::PrepareOwnedImage(
     }
     image.buffer = result.pixels_.get();
   }
+  // This owner either adopted the internal generator's complete pixel rows or
+  // allocated/initialized exactly these rows while holding the source lock.
+  // Report the readable span, not allocator overhead or retained font storage.
+  result.readable_bytes_ = readable_bytes;
+  result.complete_ = true;
   return result;
 }
 

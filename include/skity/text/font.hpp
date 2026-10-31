@@ -5,6 +5,7 @@
 #ifndef INCLUDE_SKITY_TEXT_FONT_HPP
 #define INCLUDE_SKITY_TEXT_FONT_HPP
 
+#include <cstddef>
 #include <skity/geometry/rect.hpp>
 #include <skity/graphic/paint.hpp>
 #include <skity/macros.hpp>
@@ -161,13 +162,34 @@ class SKITY_API Font {
   void LoadGlyphBitmap(const GlyphID* glyphs, uint32_t count,
                        const GlyphData* glyph_data[], const Paint& paint,
                        float context_scale, const Matrix& transform) const;
+
+  using GlyphBitmapVisitor = bool (*)(const GlyphData&,
+                                      std::size_t readable_bytes,
+                                      const void* context);
+  // Visit one request-local owned bitmap without borrowing a cache/TLS entry.
+  // The actual face, scaler container, glyph and readable pixel span remain
+  // alive through the callback, including reentrant loads or cache purges.
+  // No scaler lock is held during the callback. Do not retain borrowed views
+  // or mutate the pixels; copy them before returning. False propagates refusal.
+  // Empty bitmaps visit with zero bytes/null pixels; whitespace may have
+  // backend raster padding. Invalid storage, missing pixels for nonempty glyphs,
+  // zero allowance, null visitor or spans above maximum_readable_bytes refuse
+  // without calling the visitor. The allowance bounds the delivered snapshot,
+  // not prior native raster scratch or font/cache allocation. It is not a
+  // retained-storage certificate. Callback exception behavior is unchanged
+  // from VisitGlyphPaths and depends on the selected C++ build profile.
+  bool VisitGlyphBitmap(GlyphID glyph, const Paint& paint, float context_scale,
+                        const Matrix& transform,
+                        std::size_t maximum_readable_bytes,
+                        GlyphBitmapVisitor visitor, const void* context) const;
   void LoadGlyphBitmapInfo(const GlyphID* glyphs, uint32_t count,
                            const GlyphData* glyph_data[], const Paint& paint,
                            float context_scale, const Matrix& transform) const;
 #if defined(__APPLE__)
   // Native unit-scale alpha bitmap at one of four horizontal quarter-pixel
   // phases. The caller places its integer origin; color/stroke/transform and
-  // invalid phase inputs retain LoadGlyphBitmap behavior. No Font layout change.
+  // invalid phase inputs retain LoadGlyphBitmap behavior. No Font layout
+  // change.
   void LoadGlyphBitmapAtPhase(const GlyphID* glyphs, uint32_t count,
                               const GlyphData* glyph_data[], const Paint& paint,
                               uint32_t quarter_pixel_phase) const;
