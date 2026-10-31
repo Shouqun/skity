@@ -33,6 +33,7 @@ class CoverageAARenderer;
  */
 class HWCanvas : public Canvas {
   friend class HWAllocationTestPeer;
+  friend class HWTextSamplingTestPeer;
 
  public:
   explicit HWCanvas(GPUSurfaceImpl* surface);
