@@ -12,6 +12,7 @@
 #include "src/geometry/geometry.hpp"
 #include "src/geometry/math.hpp"
 #include "src/graphic/path_priv.hpp"
+#include "src/render/sw/sw_raster.hpp"
 
 namespace skity {
 
@@ -393,8 +394,11 @@ int SWEdgeBuilder::BuildEdges(const Path& path, const Rect& scan_bounds) {
       case PathEdgeIter::Edge::kLine: {
         const Point line[2] = {ToPoint(e.GetPoint2D(0)),
                                ToPoint(e.GetPoint2D(1))};
-        if (PointInside(line[0], scan_bounds) &&
-            PointInside(line[1], scan_bounds)) {
+        // Only coordinates the fixed-point walk cannot represent are clipped
+        // here. An edge that merely crosses the scan bounds stays whole, so
+        // the rows it covers do not depend on where the clip falls.
+        if (PointInside(line[0], kFixedPointSafeBounds) &&
+            PointInside(line[1], kFixedPointSafeBounds)) {
           AddLine(line, scan_bounds);
           break;
         }
@@ -409,9 +413,9 @@ int SWEdgeBuilder::BuildEdges(const Path& path, const Rect& scan_bounds) {
         const Point quad[3] = {ToPoint(e.GetPoint2D(0)),
                                ToPoint(e.GetPoint2D(1)),
                                ToPoint(e.GetPoint2D(2))};
-        if (PointInside(quad[0], scan_bounds) &&
-            PointInside(quad[1], scan_bounds) &&
-            PointInside(quad[2], scan_bounds)) {
+        if (PointInside(quad[0], kFixedPointSafeBounds) &&
+            PointInside(quad[1], kFixedPointSafeBounds) &&
+            PointInside(quad[2], kFixedPointSafeBounds)) {
           Point mono_x[5];
           int n = ChopQuadAtYExtrema(quad, mono_x);
           for (int i = 0; i <= n; i++) {
@@ -419,9 +423,8 @@ int SWEdgeBuilder::BuildEdges(const Path& path, const Rect& scan_bounds) {
           }
           break;
         }
-        // A control point outside the scan bounds may also be outside the
-        // representable fixed-point range. Flatten the curve and clip the
-        // pieces like lines; only out-of-range curves take this path.
+        // A control point is outside the representable fixed-point range.
+        // Flatten the curve and clip the pieces like lines.
         constexpr int kFlattenSegments = 16;
         const std::array<Point, 3> control = {quad[0], quad[1],
                                               quad[2]};
