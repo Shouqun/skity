@@ -162,6 +162,18 @@ void ExpectClipsMatchWhole(const skity::Path& path,
 
 }  // namespace
 
+TEST(SWRaster, RowClipsMatchWholeRasterAfterEdgesEndAboveThem) {
+  // The oval's edges end above most clips, in the middle of rows. The circle's
+  // edges round through those rows, so they must still be split there.
+  skity::Path path;
+  path.AddCircle(40.5f, 41.25f, 33.3f);
+  path.AddOval(skity::Rect::MakeLTRB(9.25f, 20.5f, 71.75f, 58.5f));
+  path.SetFillType(skity::Path::PathFillType::kEvenOdd);
+  for (const int32_t rows_per_clip : {1, 7, 16, 32}) {
+    ExpectClipsMatchWhole(path, skity::Matrix{}, 96, rows_per_clip);
+  }
+}
+
 TEST(SWRaster, RowClipsMatchWholeRasterForSlantedLines) {
   // A line that crosses a clip keeps its own slope instead of restarting at the
   // clip, where the fixed-point slope would round from a different point.
