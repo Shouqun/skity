@@ -198,3 +198,24 @@ TEST(SWRaster, IntegralRectanglesPreserveExactSpansAndDelegateOrder) {
     }
   }
 }
+
+TEST(SWRaster, RectangleWithHoleKeepsTheHole) {
+  skity::Path path;
+  path.SetFillType(skity::Path::PathFillType::kEvenOdd);
+  path.AddRect(skity::Rect::MakeWH(20.f, 20.f));
+  path.AddRect(skity::Rect::MakeXYWH(5.f, 5.f, 10.f, 10.f));
+
+  skity::SWRaster raster;
+  raster.RastePath(path, skity::Matrix{}, skity::Rect::MakeWH(32.f, 32.f));
+
+  bool row_covered = false;
+  for (const skity::Span& span : raster.CurrentSpans()) {
+    if (span.y != 10) {
+      continue;
+    }
+    row_covered = true;
+    EXPECT_TRUE(span.x + span.len <= 5 || span.x >= 15)
+        << "span [" << span.x << ", " << span.x + span.len << ") covers hole";
+  }
+  EXPECT_TRUE(row_covered);
+}
