@@ -769,8 +769,13 @@ void SWRaster::RastePath(Path const& path, Matrix const& transform,
   // An integral axis-aligned rectangle has one fully covered span per row.
   // Stage its bounded output directly instead of allocating paths and edges.
   // All fractional/other paths keep the original scan-conversion arithmetic.
+  // IsRect only inspects the first contour, so a path with more contours is
+  // not a plain rectangle: its later contours can cut holes in the fill.
+  constexpr size_t kMaximumRectanglePoints = 5;
   Rect rectangle;
-  if (transform.OnlyScaleAndTranslate() && path.IsRect(&rectangle)) {
+  if (transform.OnlyScaleAndTranslate() &&
+      path.CountPoints() <= kMaximumRectanglePoints &&
+      path.IsRect(&rectangle)) {
     Rect device;
     transform.MapRect(&device, rectangle);
     const auto integral = [](float value) {
